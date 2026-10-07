@@ -3705,3 +3705,16 @@ textarea::placeholder {
     object-fit: contain;
   }
 }
+
+.material-quality {
+  margin: 1rem 0;
+}
+.material-quality details {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.material-quality summary {
+  cursor: pointer;
+}

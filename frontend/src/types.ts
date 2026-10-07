@@ -16,7 +16,16 @@ export type Document = {
   warnings: string[];
   outline: { title: string; page: number; depth: number }[];
 };
-export type Page = { number: number; text: string; warning: string; edited: number };
+export type Page = {
+  number: number;
+  text: string;
+  warning: string;
+  edited: number;
+  has_table: boolean;
+  needs_review: boolean;
+  table_issues: string[];
+  text_hash: string;
+};
 export type QuestionType = 'choice' | 'true_false' | 'fill' | 'calculation' | 'proof';
 export const typeNames: Record<QuestionType, string> = {
   choice: '选择题',

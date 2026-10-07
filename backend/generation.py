@@ -6,7 +6,7 @@ import re
 import httpx
 from pydantic import ValidationError
 
-from . import db, deepseek, quality
+from . import db, deepseek, quality, materials
 from .models import ExamInput, GeneratedQuestion
 
 TYPE_NAMES = {"choice": "单项选择题", "true_false": "判断题", "fill": "填空题", "calculation": "计算题", "proof": "证明题"}
@@ -82,24 +82,31 @@ def tokens(text):
     return result
 
 
-def retrieve(config: dict, seed=0):
-    candidates = []
+def material_candidates(config: dict):
+    candidates, excluded = [], []
     seen = set()
     for scope in config["ranges"]:
         pages = db.rows("""SELECT p.*, d.name, d.kind FROM pages p JOIN documents d ON d.id=p.document_id
             WHERE p.document_id=? AND p.number BETWEEN ? AND ? ORDER BY p.number""",
             (scope["document_id"], scope["start"], scope["end"]))
         for page in pages:
-            for offset in range(0, len(page["text"]), 2400):
+            info = materials.page_info(page)
+            if info["needs_review"]:
+                excluded.append({"document_id": page["document_id"], "name": page["name"], "page": page["number"], "reason": "表格待核对"})
+            for offset, text in enumerate(materials.chunks(page)):
                 key = (page["document_id"], page["number"], offset)
-                text = page["text"][offset:offset + 2800].strip()
                 if len(text) < 40 or key in seen:
                     continue
                 seen.add(key)
                 candidates.append({"document_id": page["document_id"], "page": page["number"],
                     "name": page["name"], "kind": page["kind"], "text": text})
+    return candidates, excluded
+
+
+def retrieve(config: dict, seed=0):
+    candidates, _ = material_candidates(config)
     if not candidates:
-        raise GenerationError("所选范围没有足够的可用文本。扫描教材请先点击「识别所选页」，识别完成并核对后再出题。也可检查解析内容或调整 PDF 页码范围。")
+        raise GenerationError("所选范围没有足够的可用文本。扫描教材请先点击「识别所选页」，识别完成并核对后再出题。表格页需先核对并确认；也可检查解析内容或调整 PDF 页码范围。")
     query = tokens(config.get("focus", ""))
     rng = random.Random(seed)
     rng.shuffle(candidates)

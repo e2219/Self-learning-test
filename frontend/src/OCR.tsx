@@ -1,3 +1,4 @@
+import { MaterialQuality } from './MaterialQuality';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, json, useRemote } from './api';
@@ -274,6 +275,14 @@ export function DocumentOCR({
       </div>
       {page.error && <Notice tone="error">{page.error}</Notice>}
       {page.data?.warning && <Notice>{page.data.warning}</Notice>}
+      {page.data && !editing && (
+        <MaterialQuality
+          key={`${doc.id}-${number}`}
+          docId={doc.id}
+          page={page.data}
+          reload={page.reload}
+        />
+      )}
       <div className="ocr-comparison">
         <div>
           <h3>原始页面</h3>

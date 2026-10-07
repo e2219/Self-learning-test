@@ -100,3 +100,21 @@ class OCRInput(BaseModel):
     start: int = Field(ge=1)
     end: int = Field(ge=1)
     force: bool = False
+
+
+class TableReviewInput(BaseModel):
+    text_hash: str = Field(min_length=64, max_length=64)
+    confirmed: bool = False
+
+
+class RegionInput(BaseModel):
+    x: float = Field(ge=0, lt=1, allow_inf_nan=False)
+    y: float = Field(ge=0, lt=1, allow_inf_nan=False)
+    width: float = Field(ge=0.05, le=1, allow_inf_nan=False)
+    height: float = Field(ge=0.05, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def fits(self):
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError("局部识别范围超出页面")
+        return self

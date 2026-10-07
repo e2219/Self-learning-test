@@ -1,3 +1,4 @@
+import { MaterialQuality } from './MaterialQuality';
 import { useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -405,6 +406,14 @@ function DocumentPreview({ doc, close }: { doc: Document; close: () => void }) {
       ) : (
         <>
           {page.data?.warning && <Notice>{page.data.warning}</Notice>}
+          {page.data && !editing && (
+            <MaterialQuality
+              key={`${doc.id}-${number}`}
+              docId={doc.id}
+              page={page.data}
+              reload={page.reload}
+            />
+          )}
           <div className="section-heading">
             <h3>解析文本 {page.data?.edited ? <span className="badge">已修正</span> : null}</h3>
             {!editing && (

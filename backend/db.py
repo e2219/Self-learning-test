@@ -84,6 +84,10 @@ def init_db():
         """)
         if "ocr_done" not in {r["name"] for r in con.execute("PRAGMA table_info(pages)")}:
             con.execute("ALTER TABLE pages ADD COLUMN ocr_done INTEGER NOT NULL DEFAULT 0")
+        page_columns = {r["name"] for r in con.execute("PRAGMA table_info(pages)")}
+        for name in ("table_flag", "table_reviewed"):
+            if name not in page_columns:
+                con.execute(f"ALTER TABLE pages ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
         question_columns = {r["name"] for r in con.execute("PRAGMA table_info(questions)")}
         for name, default in (("blanks", "[]"), ("review", "{}")):
             if name not in question_columns:

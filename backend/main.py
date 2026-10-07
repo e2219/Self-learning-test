@@ -11,9 +11,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security, ocr, deepseek
-from .generation import GenerationError, active_exams, plan_questions, retrieve, run_generation, validate_content
-from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput
+from . import db, limits, security, ocr, deepseek, materials
+from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
+from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
 
 
@@ -215,15 +215,42 @@ def document_page(document_id: str, number: int):
     page = db.one("SELECT * FROM pages WHERE document_id=? AND number=?", (document_id, number))
     if not page:
         raise HTTPException(404, "页面不存在。")
-    return page
+    return {**page, **materials.page_info(page)}
 
 
 @api.put("/documents/{document_id}/pages/{number}")
 def update_page(document_id: str, number: int, payload: PageInput):
     document_page(document_id, number)
-    db.execute("UPDATE pages SET text=?,edited=1,warning=? WHERE document_id=? AND number=?",
+    db.execute("UPDATE pages SET text=?,edited=1,table_reviewed=0,warning=? WHERE document_id=? AND number=?",
         (payload.text, "文本较少，请确认有足够内容用于出题。" if len(payload.text.strip()) < 40 else "", document_id, number))
     return document_page(document_id, number)
+
+
+@api.put("/documents/{document_id}/pages/{number}/table-review")
+def review_table(document_id: str, number: int, payload: TableReviewInput):
+    page = document_page(document_id, number)
+    if page["text_hash"] != payload.text_hash:
+        raise HTTPException(409, "页面已变化，请重新核对。")
+    if payload.confirmed and materials.table_info(page["text"], flagged=True)["table_issues"]:
+        raise HTTPException(422, "请先修正表格结构或无法辨认的数据，再确认。")
+    with db.connection() as con:
+        changed = con.execute("UPDATE pages SET table_flag=1,table_reviewed=? WHERE document_id=? AND number=? AND text=?",
+            (int(payload.confirmed), document_id, number, page["text"])).rowcount
+    if not changed:
+        raise HTTPException(409, "页面已变化，请重新核对。")
+    return document_page(document_id, number)
+
+
+@api.post("/documents/{document_id}/pages/{number}/recognize-region")
+async def recognize_region(document_id: str, number: int, payload: RegionInput):
+    document_page(document_id, number)
+    ensure_ocr_idle(document_id)
+    try:
+        image = await run_in_threadpool(ocr.render_page, db.DATA_DIR / "uploads" / f"{document_id}.pdf", number, payload.model_dump())
+        result, usage = await ocr.recognize_page(image)
+    except ocr.OCRError as exc:
+        raise HTTPException(422, f"{exc}（本次报告用量 {exc.tokens} tokens）") from exc
+    return {"text": result.text, "tokens": usage, "message": "局部识别草稿，未覆盖页面。请核对后手动合并到页面文本。"}
 
 
 @api.delete("/documents/{document_id}")
@@ -319,7 +346,9 @@ def validate_ranges(payload):
 
 @api.post("/retrieval-preview")
 def retrieval_preview(payload: ExamInput):
-    return {"sources": validate_ranges(payload)}
+    sources = validate_ranges(payload)
+    _, excluded = material_candidates(payload.model_dump())
+    return {"sources": sources, "excluded": excluded}
 
 
 @api.post("/exams", status_code=201)
