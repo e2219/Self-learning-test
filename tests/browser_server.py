@@ -40,6 +40,10 @@ from backend import ocr  # noqa: E402
 
 async def mock_ocr(image):
     await asyncio.sleep(.1)
-    return ocr.OCRResult(text=r"扫描页识别测试：若事件 A 与 B 相互独立，则 $P(A\cap B)=P(A)P(B)$。设 $P(A)=0.4$，$P(B)=0.5$，故 $P(A\cap B)=0.2$。"), 180
+    text = r"扫描页识别测试：若事件 A 与 B 相互独立，则 $P(A\cap B)=P(A)P(B)$。设 $P(A)=0.4$，$P(B)=0.5$，故 $P(A\cap B)=0.2$。"
+    return ocr.decode_response({
+        "choices": [{"finish_reason": "stop", "message": {"content": ocr.TEXT_START + "\n" + text + "\n" + ocr.TEXT_END}}],
+        "usage": {"total_tokens": 180},
+    })
 
 ocr.recognize_page = mock_ocr

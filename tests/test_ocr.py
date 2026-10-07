@@ -126,10 +126,12 @@ def test_vision_adapter_payload(client, setup, monkeypatch):
     def handler(request):
         body = json.loads(request.content)
         assert body['model'] == 'deepseek-flash'
+        assert 'response_format' not in body
+        assert ocr.TEXT_END in body['messages'][0]['content'][0]['text']
         assert request.headers['authorization'] == 'Bearer test-key-never-send'
         assert body['messages'][0]['role'] == 'user'
         assert body['messages'][0]['content'][1]['image_url']['url'].startswith('data:image/jpeg;base64,')
-        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps({'text': TEXT})}}], 'usage': {'total_tokens': 321}})
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': ocr.TEXT_START + '\n' + TEXT + '\n' + ocr.TEXT_END}}], 'usage': {'total_tokens': 321}})
     monkeypatch.setattr(ocr.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
     result, tokens = asyncio.run(ocr.recognize_page(b'fake-image'))
     assert result.text == TEXT and tokens == 321
@@ -148,3 +150,102 @@ def test_provider_errors_do_not_leak_or_overwrite(client, setup, monkeypatch, st
     assert response.json()['status'] == 'partial'
     assert 'DO-NOT-LEAK' not in response.text
     assert client.get(f'/api/documents/{doc_id}/pages/1').json() == before
+
+# Formula-heavy transcriptions must never pass through a second JSON decoder.
+MATH_PAGE = r'''# 事件运算及概率
+设 $A, B$ 为事件，则 $A\cup B$ 是并事件，$A\cap B$ 是交事件。
+$$P(A\cup B)=P(A)+P(B)-P(A\cap B)$$
+$$\frac{1}{\sqrt{2\pi}}\int_{-\infty}^{+\infty}e^{-x^2/2}\,dx=1$$
+$$\begin{pmatrix}a&b\\c&d\end{pmatrix},\quad\sum_{i=1}^{n}i=\frac{n(n+1)}2$$
+注意 $\theta,\nu,\rho,\beta$ 和 $\text{事件 A}$；引号 "成立" 保持不变。
+[图形未转写]，某处 [无法辨认]。'''
+
+
+def response_body(text=MATH_PAGE, **patch):
+    return {'choices': [{'finish_reason': 'stop', 'message': {'content': ocr.TEXT_START + '\n' + text + '\n' + ocr.TEXT_END}}], 'usage': {'total_tokens': 789}, **patch}
+
+
+def test_latex_json_failure_reproduced_and_plain_transcription_preserved():
+    from pydantic import ValidationError
+    # Reproduces the previous strict JSON failure from a single LaTeX backslash.
+    with pytest.raises(ValidationError):
+        ocr.OCRResult.model_validate_json(r'{"text":"$A\cup B$"}')
+    # Worse: JSON-valid escape sequences silently corrupted math in the old code.
+    corrupted = ocr.OCRResult.model_validate_json(r'{"text":"$\frac{1}{2}$"}')
+    assert '\x0c' in corrupted.text
+    result, tokens = ocr.decode_response(response_body())
+    assert result.text == MATH_PAGE and tokens == 789
+    assert '\x0c' not in result.text and r'\frac' in result.text and r'\\c' in result.text
+
+
+@pytest.mark.parametrize('usage', [None, {}, {'total_tokens': None}, {'total_tokens': -1}, {'total_tokens': True}, {'total_tokens': 'unknown'}])
+def test_usage_metadata_cannot_break_successful_transcription(usage):
+    result, tokens = ocr.decode_response(response_body(usage=usage))
+    assert result.text == MATH_PAGE and tokens == 0
+
+
+@pytest.mark.parametrize('data,code', [
+    (None, 'OCR_RESPONSE_SHAPE'),
+    ({'choices': []}, 'OCR_RESPONSE_SHAPE'),
+    ({'choices': [None]}, 'OCR_RESPONSE_SHAPE'),
+    ({'choices': [{'finish_reason': 'length'}]}, 'OCR_TRUNCATED'),
+    ({'choices': [{'finish_reason': 'content_filter'}]}, 'OCR_INCOMPLETE'),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'content': None}}]}, 'OCR_EMPTY_CONTENT'),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'content': ['bad']}}]}, 'OCR_EMPTY_CONTENT'),
+])
+def test_provider_failure_categories(data, code):
+    with pytest.raises(ocr.OCRError, match=code):
+        ocr.decode_response(data)
+
+
+@pytest.mark.parametrize('text,code', [
+    (ocr.TEXT_START + '\npartial', 'OCR_TEXT_BOUNDARY'),
+    ('unmarked response', 'OCR_TEXT_BOUNDARY'),
+    (ocr.TEXT_START + '\n' + ocr.TEXT_END, 'OCR_EMPTY_TEXT'),
+    (ocr.TEXT_START + ocr.TEXT_START + ocr.TEXT_END, 'OCR_TEXT_BOUNDARY'),
+    (ocr.TEXT_START + '\x0crac' + ocr.TEXT_END, 'OCR_TEXT_CONTROL'),
+    (ocr.TEXT_START + 'x' * 50001 + ocr.TEXT_END, 'OCR_TEXT_LIMIT'),
+])
+def test_incomplete_or_invalid_transcriptions_are_not_silently_saved(text, code):
+    with pytest.raises(ocr.OCRError, match=code):
+        ocr.parse_transcription(text)
+
+
+def test_explicit_blank_page_is_distinct_from_empty_response():
+    result, tokens = ocr.decode_response(response_body(ocr.BLANK_PAGE))
+    assert result.text == '' and tokens == 789
+
+
+def test_format_failure_keeps_usage_and_never_logs_content(client, setup, monkeypatch, caplog):
+    original = httpx.AsyncClient
+    doc_id = setup[1]['id']
+    before = client.get(f'/api/documents/{doc_id}/pages/1').json()
+    body = response_body()
+    body['choices'][0]['message']['content'] = 'PRIVATE-PAGE-DO-NOT-LOG'
+    monkeypatch.setattr(ocr.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body)), **kw))
+    job_id = client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1, 'force': True}).json()['id']
+    job = client.get(f'/api/ocr/{job_id}').json()
+    assert job['tokens'] == 789 and job['status'] == 'partial'
+    assert 'OCR_TEXT_BOUNDARY' in job['pages'][0]['error']
+    assert 'OCR_TEXT_BOUNDARY' in caplog.text and 'PRIVATE-PAGE-DO-NOT-LOG' not in caplog.text
+    assert client.get(f'/api/documents/{doc_id}/pages/1').json() == before
+    body['choices'][0]['message']['content'] = response_body()['choices'][0]['message']['content']
+    client.post(f'/api/ocr/{job_id}/retry')
+    job = client.get(f'/api/ocr/{job_id}').json()
+    assert job['tokens'] == 1578 and job['status'] == 'ready'
+    assert client.get(f'/api/documents/{doc_id}/pages/1').json()['text'] == MATH_PAGE
+
+
+def test_non_json_http_response_is_distinguished(client, setup, monkeypatch):
+    original = httpx.AsyncClient
+    monkeypatch.setattr(ocr.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(lambda _: httpx.Response(200, text='<html>PRIVATE PROXY ERROR</html>')), **kw))
+    with pytest.raises(ocr.OCRError, match='OCR_RESPONSE_JSON') as error:
+        asyncio.run(ocr.recognize_page(b'test-image'))
+    assert 'PRIVATE' not in str(error.value)
+
+@pytest.mark.parametrize('fence', ['```', '```markdown', '```md', '```text'])
+def test_optional_outer_code_fence_does_not_change_latex(fence):
+    wrapped = fence + '\n' + ocr.TEXT_START + '\n' + MATH_PAGE + '\n' + ocr.TEXT_END + '\n```'
+    assert ocr.parse_transcription(wrapped).text == MATH_PAGE
+    with pytest.raises(ocr.OCRError, match='OCR_TEXT_BOUNDARY'):
+        ocr.parse_transcription(fence + '\n' + MATH_PAGE + '\n```')
