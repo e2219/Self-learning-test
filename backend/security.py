@@ -43,7 +43,7 @@ def login(code, address):
     if len(failures[address]) >= 10:
         raise HTTPException(429, "尝试次数过多，请 5 分钟后重试。")
     env_code = os.environ.get("STUDY_ACCESS_CODE")
-    valid = hmac.compare_digest(code, env_code) if env_code else hmac.compare_digest(
+    valid = hmac.compare_digest(code.encode(), env_code.encode()) if env_code else hmac.compare_digest(
         hash_code(code, db.setting("access_salt")), db.setting("access_hash")
     )
     if not valid:

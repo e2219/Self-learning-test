@@ -63,8 +63,10 @@ def test_auth_and_origin(client):
     assert client.get("/api/courses").status_code == 401
     assert client.post("/api/login", json={"code": "wrong"}).status_code == 401
     assert client.post("/api/login", json={"code": "test-access-123"}, headers={"Origin": "https://evil.example"}).status_code == 403
-    assert client.post("/api/login", json={"code": "test-access-123"}).status_code == 200
-    assert "HttpOnly" in client.cookies.get("study_session", "") or client.get("/api/session").status_code == 200
+    response = client.post("/api/login", json={"code": "test-access-123"})
+    assert response.status_code == 200
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert "SameSite=strict" in response.headers["set-cookie"]
     assert client.post("/api/logout").status_code == 200
     assert client.get("/api/settings").status_code == 401
 
@@ -209,3 +211,22 @@ def test_provider_failure_hides_response_body(client, setup, monkeypatch):
     with pytest.raises(generation.GenerationError, match="密钥无效") as exc:
         asyncio.run(generation.generate_one({"type": "choice", "points": 5}, {"difficulty": "基础巩固"}, [], []))
     assert "secret-provider-body" not in str(exc.value)
+
+
+def test_unicode_access_code_and_rate_limit(client, monkeypatch):
+    monkeypatch.setenv("STUDY_ACCESS_CODE", "数学学习-我的口令123")
+    assert client.post("/api/login", json={"code": "数学学习-我的口令123"}).status_code == 200
+    for _ in range(10):
+        assert client.post("/api/login", json={"code": "错误口令"}).status_code == 401
+    assert client.post("/api/login", json={"code": "数学学习-我的口令123"}).status_code == 429
+
+
+def test_restart_practice_preserves_wrong_mark_and_history(client, setup, monkeypatch):
+    monkeypatch.setattr(generation, "generate_one", fake_generate)
+    exam_id = client.post("/api/exams", json=exam_config(setup, count=1)).json()["id"]
+    q = client.get(f"/api/exams/{exam_id}").json()["questions"][0]
+    client.patch(f"/api/questions/{q['id']}/progress", json={"self_score": 3, "user_answer": "旧答案"})
+    result = client.patch(f"/api/questions/{q['id']}/progress", json={"self_score": None, "user_answer": ""}).json()
+    assert result["self_score"] is None and result["user_answer"] == ""
+    assert result["is_wrong"] == 1
+    assert len(client.get(f"/api/questions/{q['id']}/attempts").json()) == 1

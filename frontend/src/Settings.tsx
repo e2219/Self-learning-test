@@ -5,7 +5,160 @@ import type { Settings } from './types';
 import { Loading, Notice, PageHeading } from './ui';
 
 export function SettingsPage() {
-  const settings=useRemote<Settings>('/settings');
-  const [key,setKey]=useState(''),[model,setModel]=useState(''),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');
-  return <><PageHeading eyebrow="PREFERENCES" title="应用设置" description="连接 AI，准备好属于你的学习环境。"/>{settings.loading?<Loading/>:<div className="settings-layout"><section className="panel form-section"><div className="form-section-title"><div className="settings-icon"><KeyRound size={22}/></div><div><h2>DeepSeek API</h2><p>用于生成题目、参考答案和逐步解析。</p></div></div>{(error||settings.error)&&<Notice tone="error">{error||settings.error}</Notice>}{message&&<Notice tone="success">{message}</Notice>}<div className={`connection-state ${settings.data?.has_key?'connected':''}`}><span className="status-dot"/>{settings.data?.has_key?'已保存 API Key':'尚未配置 API Key'}{settings.data?.has_key&&<Check size={16}/>}</div><form onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');setMessage('');try{await api('/settings',json('PUT',{api_key:key,model:model||settings.data?.model||'deepseek-chat'}));setKey('');await settings.reload();setMessage('设置已保存。密钥有效性会在首次生成时验证。');}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}><label>API Key<input type="password" autoComplete="off" value={key} disabled={settings.data?.key_from_env} onChange={e=>setKey(e.target.value)} placeholder={settings.data?.has_key?'已配置 · 留空保留现有密钥':'输入 DeepSeek API Key'}/></label><p className="field-help">{settings.data?.key_from_env?'当前使用电脑环境变量中的密钥。请在启动环境中修改。':'密钥仅保存在本机后端，不会回传到页面或提交到 Git。'}</p><label>出题模型<select value={model||settings.data?.model||'deepseek-chat'} onChange={e=>setModel(e.target.value)}><option value="deepseek-chat">DeepSeek Chat · 日常练习</option><option value="deepseek-reasoner">DeepSeek Reasoner · 推理与证明</option></select></label><p className="field-help">不同模型的速度和费用不同。复杂证明建议尝试推理模型，并人工核验解答。</p><div className="button-group"><button className="button primary" type="submit" disabled={busy}><Save size={16}/>{busy?'保存中…':'保存设置'}</button>{settings.data?.has_key&&!settings.data.key_from_env&&<button className="button ghost" type="button" disabled={busy} onClick={async()=>{if(!window.confirm('确认清除本机保存的 API Key？'))return;try{await api('/settings',json('PUT',{clear_key:true,model:model||settings.data?.model}));await settings.reload();setMessage('已清除密钥。');}catch(err){setError((err as Error).message);}}}>清除密钥</button>}</div></form></section><aside><div className="panel reading-note"><span className="eyebrow">YOUR LOCAL WORKSPACE</span><h3>数据留在你的电脑上</h3><div className="settings-note"><Server size={20}/><div><strong>教材与学习记录</strong><p>保存在项目的 data 目录，备份时请先关闭应用，再复制整个目录。</p></div></div><div className="settings-note"><ShieldCheck size={20}/><div><strong>API 请求范围</strong><p>出题时会把选中的相关教材片段、出题要求和已有题干发送给 DeepSeek。</p></div></div><div className="settings-note"><Wifi size={20}/><div><strong>手机访问</strong><p>手机与电脑连接同一 Wi-Fi，打开启动终端给出的局域网地址，并输入访问口令。电脑须保持开机。</p></div></div></div><p className="field-help">访问口令在电脑启动终端显示。若希望自定义，可设置 STUDY_ACCESS_CODE 环境变量后重启。</p></aside></div>}</>;
+  const settings = useRemote<Settings>('/settings');
+  const [key, setKey] = useState(''),
+    [model, setModel] = useState(''),
+    [busy, setBusy] = useState(false),
+    [message, setMessage] = useState(''),
+    [error, setError] = useState('');
+  return (
+    <>
+      <PageHeading
+        eyebrow="PREFERENCES"
+        title="应用设置"
+        description="连接 AI，准备好属于你的学习环境。"
+      />
+      {settings.loading ? (
+        <Loading />
+      ) : (
+        <div className="settings-layout">
+          <section className="panel form-section">
+            <div className="form-section-title">
+              <div className="settings-icon">
+                <KeyRound size={22} />
+              </div>
+              <div>
+                <h2>DeepSeek API</h2>
+                <p>用于生成题目、参考答案和逐步解析。</p>
+              </div>
+            </div>
+            {(error || settings.error) && <Notice tone="error">{error || settings.error}</Notice>}
+            {message && <Notice tone="success">{message}</Notice>}
+            <div className={`connection-state ${settings.data?.has_key ? 'connected' : ''}`}>
+              <span className="status-dot" />
+              {settings.data?.has_key ? '已保存 API Key' : '尚未配置 API Key'}
+              {settings.data?.has_key && <Check size={16} />}
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setError('');
+                setMessage('');
+                try {
+                  await api(
+                    '/settings',
+                    json('PUT', {
+                      api_key: key,
+                      model: model || settings.data?.model || 'deepseek-chat',
+                    }),
+                  );
+                  setKey('');
+                  await settings.reload();
+                  setMessage('设置已保存。密钥有效性会在首次生成时验证。');
+                } catch (err) {
+                  setError((err as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <label>
+                API Key
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={key}
+                  disabled={settings.data?.key_from_env}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder={
+                    settings.data?.has_key ? '已配置 · 留空保留现有密钥' : '输入 DeepSeek API Key'
+                  }
+                />
+              </label>
+              <p className="field-help">
+                {settings.data?.key_from_env
+                  ? '当前使用电脑环境变量中的密钥。请在启动环境中修改。'
+                  : '密钥仅保存在本机后端，不会回传到页面或提交到 Git。'}
+              </p>
+              <label>
+                出题模型
+                <select
+                  value={model || settings.data?.model || 'deepseek-chat'}
+                  onChange={(e) => setModel(e.target.value)}
+                >
+                  <option value="deepseek-chat">DeepSeek Chat · 日常练习</option>
+                  <option value="deepseek-reasoner">DeepSeek Reasoner · 推理与证明</option>
+                </select>
+              </label>
+              <p className="field-help">
+                不同模型的速度和费用不同。复杂证明建议尝试推理模型，并人工核验解答。
+              </p>
+              <div className="button-group">
+                <button className="button primary" type="submit" disabled={busy}>
+                  <Save size={16} />
+                  {busy ? '保存中…' : '保存设置'}
+                </button>
+                {settings.data?.has_key && !settings.data.key_from_env && (
+                  <button
+                    className="button ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (!window.confirm('确认清除本机保存的 API Key？')) return;
+                      try {
+                        await api(
+                          '/settings',
+                          json('PUT', { clear_key: true, model: model || settings.data?.model }),
+                        );
+                        await settings.reload();
+                        setMessage('已清除密钥。');
+                      } catch (err) {
+                        setError((err as Error).message);
+                      }
+                    }}
+                  >
+                    清除密钥
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+          <aside>
+            <div className="panel reading-note">
+              <span className="eyebrow">YOUR LOCAL WORKSPACE</span>
+              <h3>数据留在你的电脑上</h3>
+              <div className="settings-note">
+                <Server size={20} />
+                <div>
+                  <strong>教材与学习记录</strong>
+                  <p>保存在项目的 data 目录，备份时请先关闭应用，再复制整个目录。</p>
+                </div>
+              </div>
+              <div className="settings-note">
+                <ShieldCheck size={20} />
+                <div>
+                  <strong>API 请求范围</strong>
+                  <p>出题时会把选中的相关教材片段、出题要求和已有题干发送给 DeepSeek。</p>
+                </div>
+              </div>
+              <div className="settings-note">
+                <Wifi size={20} />
+                <div>
+                  <strong>手机访问</strong>
+                  <p>
+                    手机与电脑连接同一
+                    Wi-Fi，打开启动终端给出的局域网地址，并输入访问口令。电脑须保持开机。
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p className="field-help">
+              访问口令在电脑启动终端显示。若希望自定义，可设置 STUDY_ACCESS_CODE 环境变量后重启。
+            </p>
+          </aside>
+        </div>
+      )}
+    </>
+  );
 }
