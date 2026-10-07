@@ -42,6 +42,13 @@ class TypeRule(BaseModel):
     points: float = Field(gt=0, le=100, allow_inf_nan=False)
 
 
+class PlanSlot(BaseModel):
+    topic_id: str = Field(min_length=1, max_length=64)
+    type: QuestionType
+    points: float = Field(gt=0, le=100, allow_inf_nan=False)
+    objective: str = Field(min_length=1, max_length=500)
+
+
 class ExamInput(BaseModel):
     course_id: str
     title: str = Field(min_length=1, max_length=100)
@@ -52,6 +59,8 @@ class ExamInput(BaseModel):
     difficulty: Literal["基础巩固", "综合应用", "挑战题"] = "基础巩固"
     focus: str = Field(default="", max_length=500)
     duration: int = Field(default=60, ge=5, le=240)
+    plan_id: str | None = Field(default=None, max_length=64)
+    blueprint: list[PlanSlot] = Field(default_factory=list, max_length=30)
     style: Literal["贴近原题", "适度变式", "情景应用"] = "适度变式"
 
     @model_validator(mode="after")

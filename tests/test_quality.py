@@ -13,7 +13,7 @@ from tests.test_generation_recovery import result
 
 
 def blind(**overrides):
-    return dict(answer='A', option_judgments=[{'label': x, 'verdict': 'correct' if x == 'A' else 'incorrect', 'reason': '依据资料逐项判断'} for x in 'ABCD'], type_matches=True, supported=True, unambiguous=True, duplicate=False, issues=[], **overrides)
+    return dict(answer='A', option_judgments=[{'label': x, 'verdict': 'correct' if x == 'A' else 'incorrect', 'reason': '依据资料逐项判断'} for x in 'ABCD'], target_matches=True, type_matches=True, supported=True, unambiguous=True, duplicate=False, issues=[], **overrides)
 
 
 def test_blind_review_does_not_see_proposed_answer_and_checks_consistency():

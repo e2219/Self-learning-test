@@ -93,6 +93,8 @@ def material_candidates(config: dict):
             info = materials.page_info(page)
             if info["needs_review"]:
                 excluded.append({"document_id": page["document_id"], "name": page["name"], "page": page["number"], "reason": "表格待核对"})
+            elif len(page['text'].strip()) < 40:
+                excluded.append({"document_id": page["document_id"], "name": page["name"], "page": page["number"], "reason": "可用文字不足"})
             for offset, text in enumerate(materials.chunks(page)):
                 key = (page["document_id"], page["number"], offset)
                 if len(text) < 40 or key in seen:
@@ -242,6 +244,7 @@ async def generate_one(question, config, references, previous):
 贴近原题不得扩展新情景；适度变式允许改变设问；情景应用允许假设情景但必须明确假设，生物化学的实验事实、机制和数值关系必须有资料依据，不能虚构。
 计算和证明题须给出充分条件、完整解答，并自查结论与过程。不要生成需要图片的题目。
 根据已有题目的题干、选项和知识点，优先覆盖尚未考查的知识。相同知识点应更换设问或情境，不能仅替换少量措辞或调换选项顺序。
+planned_target 若存在，是用户确认的本题考点与设问目标，必须遵循，优先于随机出题角度。只考查该目标，不得附加未分配的其他知识点或填空；单选正确选项必须直接回答该目标，不能仅让一个干扰项提及该目标。
 target_passage 是从完整参考资料中选出的本题优先考查片段，应以它为出题重点，并用其余资料提供必要条件。出题角度是参考，不能强行超出教材，也不能改变指定题型、难度。收到 validation_feedback 时必须针对具体错误修改，不能重复提交失败题目。
 sources 指向知识依据，不应声称新编题是教材原题。不得在题干中提前泄露答案。
 只返回 JSON，不使用代码块。"""
@@ -256,7 +259,8 @@ sources 指向知识依据，不应声称新编题是教材原题。不得在题
     elif question["type"] == "true_false":
         schema["properties"]["answer"]["enum"] = ["正确", "错误"]
     course = db.one("SELECT name,description FROM courses WHERE id=?", (config.get("course_id", ""),)) or {}
-    user = {"course": course, "style": config.get("style", "适度变式"), "task": {"type": TYPE_NAMES[question["type"]], "points": question["points"],
+    course = {**course, "expected_target": config.get("planned_target")}
+    user = {"planned_target": config.get("planned_target"), "course": course, "style": config.get("style", "适度变式"), "task": {"type": TYPE_NAMES[question["type"]], "points": question["points"],
         "position": question.get("position", 1), "difficulty": config["difficulty"], "focus": config.get("focus", "")},
         "avoid_questions": previous_for_prompt(previous), "reference_material": references,
         "output_example_structure_only": example, "output_schema": schema}
@@ -325,6 +329,7 @@ sources 指向知识依据，不应声称新编题是教材原题。不得在题
 
 
 async def run_generation(exam_id):
+    from .planning import planned_references
     if exam_id in active_exams:
         return
     active_exams.add(exam_id)
@@ -341,9 +346,12 @@ async def run_generation(exam_id):
                     break
                 db.execute("UPDATE questions SET status='generating',error='' WHERE id=?", (question["id"],))
                 try:
-                    references = retrieve(config, question["position"] + random.randrange(100000))
+                    references, target = planned_references(config, question["position"])
+                    if references is None:
+                        references = retrieve(config, question["position"] + random.randrange(100000))
+                    question_config = {**config, "planned_target": target}
                     previous = [db.decode(r, ("options",)) for r in db.rows("SELECT type,stem,options,knowledge FROM questions WHERE exam_id=? AND id!=? AND status='ready' AND stem!='' ORDER BY position", (exam_id, question["id"]))]
-                    generated, usage = await generate_one(question, config, references, previous)
+                    generated, usage = await generate_one(question, question_config, references, previous)
                     names = {(r["document_id"], r["page"]): r["name"] for r in references}
                     sources = [{**s.model_dump(), "name": names[(s.document_id, s.page)]} for s in generated.sources]
                     with db.connection() as con:

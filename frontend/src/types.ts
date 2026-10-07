@@ -71,6 +71,8 @@ export type ExamConfig = {
   focus: string;
   duration: number;
   style?: string;
+  plan_id?: string;
+  blueprint?: PlanSlot[];
 };
 export type Exam = {
   id: string;
@@ -85,6 +87,8 @@ export type Exam = {
   question_count?: number;
   ready_count?: number;
   config: ExamConfig;
+  coverage?: { title: string; planned: number; completed: number }[];
+  planning_tokens?: number;
   questions: Question[];
 };
 export type Settings = {
@@ -95,4 +99,21 @@ export type Settings = {
   ocr_max_pages: number;
   max_pdf_bytes: number;
   max_pdf_pages: number;
+};
+
+export type PlanSlot = { topic_id: string; type: QuestionType; points: number; objective: string };
+export type ExamPlan = {
+  id: string;
+  status: string;
+  error: string;
+  tokens: number;
+  topics: {
+    id: string;
+    title: string;
+    objective: string;
+    reasons: string[];
+    sources: { name: string; page: number; quote: string }[];
+  }[];
+  blueprint: PlanSlot[];
+  excluded: { name: string; page: number; reason: string }[];
 };

@@ -22,6 +22,7 @@ class BlindReview(BaseModel):
     answer: str = Field(min_length=1, max_length=4000)
     option_judgments: list[OptionJudgment] = Field(max_length=4)
     type_matches: StrictBool
+    target_matches: StrictBool
     supported: StrictBool
     unambiguous: StrictBool
     duplicate: StrictBool
@@ -50,6 +51,7 @@ async def review_question(call, q, kind, references, previous, course):
               '严格依据给定资料和题设条件独立作答。不得以更契合课程为理由在多个正确选项中挑一个。'
               '填空题必须能逐空填写简短术语、数值或表达式，不能要求长篇论述；计算题需计算，证明题需证明。'
               '发现资料表格数据矛盾、条件不充分、资料依据缺失要拒绝，不要替资料补造事实。'
+              '如 course.expected_target 非空，必须核对主要设问及正确答案直接考查该目标，不能只在干扰项中提及目标、也不能添加其他考点的填空；无分配目标时 target_matches 为 true。'
               '重复指相同条件和实质设问，仅同一知识点而不同技能不算重复。'
               '只返回符合 output_schema 的 JSON，所有判断必须给出依据。')
     task = {'stage': 'blind_review', 'course': course, 'type': kind,
@@ -60,6 +62,8 @@ async def review_question(call, q, kind, references, previous, course):
     blind_result = await call([{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(task, ensure_ascii=False)}])
     blind = parse_review(blind_result, BlindReview)
     issues = list(blind.issues)
+    if not blind.target_matches:
+        issues.append('未考查用户分配的知识点或设问目标')
     if not blind.type_matches:
         issues.append('实际设问不符合指定题型')
     if not blind.supported or not blind.unambiguous:

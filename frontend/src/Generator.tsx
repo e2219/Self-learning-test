@@ -1,3 +1,4 @@
+import { Blueprint } from './Blueprint';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -18,6 +19,7 @@ import type {
   Document,
   Exam,
   ExamConfig,
+  ExamPlan,
   QuestionType,
   Settings,
   SourceRange,
@@ -47,6 +49,7 @@ export function Generator() {
     [focus, setFocus] = useState(''),
     [style, setStyle] = useState('适度变式'),
     [duration, setDuration] = useState(60),
+    [plan, setPlan] = useState<ExamPlan | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [docsLoading, setDocsLoading] = useState(false),
@@ -76,6 +79,19 @@ export function Generator() {
       current = false;
     };
   }, [courseId]);
+  const planKey = JSON.stringify({
+    courseId,
+    ranges,
+    rules,
+    mode,
+    randomCount,
+    difficulty,
+    focus,
+    style,
+  });
+  useEffect(() => {
+    setPlan(null);
+  }, [planKey]);
   const course = courses.data?.find((c) => c.id === courseId);
   const count = mode === 'custom' ? rules.reduce((n, r) => n + r.count, 0) : randomCount;
   const points = rules.reduce((n, r) => n + r.count * r.points, 0);
@@ -93,6 +109,8 @@ export function Generator() {
       focus,
       duration,
       style,
+      plan_id: plan?.id,
+      blueprint: plan?.blueprint,
     };
   }
   function updateRange(id: string, patch: Partial<SourceRange>) {
@@ -151,6 +169,10 @@ export function Generator() {
           className="generator-layout"
           onSubmit={async (e) => {
             e.preventDefault();
+            if (!plan || plan.status !== 'ready') {
+              setError('请先生成并核对考点分配表。');
+              return;
+            }
             setBusy(true);
             setError('');
             try {
@@ -480,6 +502,12 @@ export function Generator() {
                 />
               </label>
             </section>
+            <Blueprint
+              key={planKey}
+              config={payload()}
+              enabled={!!valid && !!settings.data?.has_key}
+              changed={setPlan}
+            />
           </div>
           <aside className="generation-summary">
             <div className="panel summary-panel">
@@ -519,10 +547,10 @@ export function Generator() {
               <button
                 className="button primary full"
                 type="submit"
-                disabled={busy || !valid || !settings.data?.has_key}
+                disabled={busy || !valid || !settings.data?.has_key || plan?.status !== 'ready'}
               >
                 <Sparkles size={17} />
-                {busy ? '正在创建…' : '生成专属测验'}
+                {busy ? '正在创建…' : '确认分配并生成测验'}
               </button>
               <button
                 className="button ghost full"

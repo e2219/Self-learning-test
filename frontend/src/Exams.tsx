@@ -482,9 +482,7 @@ export function QuestionCard({
         </div>
       ) : (
         <>
-          <MathText className="question-stem">
-            {q.stem.replace(/\[\[blank:(\d+)\]\]/g, '____（$1）')}
-          </MathText>
+          <MathText className="question-stem">{q.stem}</MathText>
           {q.options.length > 0 && (
             <div className="question-options">
               {q.options.map((option, i) => (
@@ -722,6 +720,23 @@ export function ExamPage() {
       {(error || exam.error) && <Notice tone="error">{error || exam.error}</Notice>}
       {info && <Notice>{info}</Notice>}
       {data.error && <Notice>{data.error}</Notice>}
+      {data.coverage && (
+        <details className="panel">
+          <summary>
+            考点覆盖情况 · 规划用量 {data.planning_tokens ?? 0} tokens（与出题用量分开）
+          </summary>
+          <p className="field-help">
+            以下统计按分配表和已完成题目计算；AI
+            审题不能保证事实完全正确。删除题目后原分配仍保留供核对。
+          </p>
+          {data.coverage.map((t, i) => (
+            <p key={i}>
+              {t.title}：分配 {t.planned} 题，完成 {t.completed} 题
+              {t.planned === 0 ? ' · 尚未覆盖' : ''}
+            </p>
+          ))}
+        </details>
+      )}
       <div className="exam-progress panel">
         <div className="progress-info">
           <Status status={data.status} />
@@ -917,7 +932,7 @@ export function PrintPage() {
             <div className="print-question-heading">
               {i + 1}. {typeNames[q.type]}（{q.points} 分）
             </div>
-            <MathText>{q.stem.replace(/\[\[blank:(\d+)\]\]/g, '____（$1）')}</MathText>
+            <MathText>{q.stem}</MathText>
             {q.options.map((o, j) => (
               <div className="print-option" key={j}>
                 <span>{'ABCD'[j]}.</span>

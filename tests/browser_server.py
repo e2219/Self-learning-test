@@ -23,7 +23,8 @@ async def mock_generate(question, config, references, previous):
     await asyncio.sleep(.05)
     kind = question["type"]
     return GeneratedQuestion(
-        stem=f"练习 {question['position']}：设事件 $A$ 与 $B$ 相互独立，且 $P(A)=0.4$，$P(B)=0.5$。求 $P(A\\cap B)$。",
+        blanks=[{"answer":"$0.2$", "alternatives":[]}, {"answer":"0.5", "alternatives":[]}] if kind == "fill" else [],
+        stem="独立事件 A、B 的交集概率为 [[blank:1]]，比例为 $v=[[blank:2]] V$。" if kind == "fill" else f"练习 {question['position']}：设事件 $A$ 与 $B$ 相互独立，且 $P(A)=0.4$，$P(B)=0.5$。求 $P(A\\cap B)$。",
         options=["$0.2$", "$0.4$", "$0.5$", "$0.9$"] if kind == "choice" else [],
         answer="A" if kind == "choice" else "正确" if kind == "true_false" else "$P(A\\cap B)=0.2$",
         explanation="由事件独立的定义，有：\n\n$$P(A\\cap B)=P(A)P(B)=0.4\\times0.5=0.2.$$\n\n注意独立与互斥的区别。此处两事件可以同时发生。",
@@ -57,3 +58,17 @@ async def mock_connection(model):
             "message": "DeepSeek 连接正常（HTTP 200），已确认可用 OCR 模型 deepseek-flash。（测试模拟响应）"}
 
 deepseek.check_connection = mock_connection
+
+
+# Blueprint extraction is deterministic here; production uses source-grounded API extraction.
+from backend import planning, db
+import json
+async def mock_plan(plan_id):
+    row = db.one("SELECT * FROM exam_plans WHERE id=?", (plan_id,))
+    refs = json.loads(row['materials'])
+    ref = refs[0]
+    topics = [{'id': 'topic1', 'title': '事件独立性', 'objective': '根据独立性计算概率', 'weight': 1, 'reasons': ['测试主题'],
+               'sources': [{'document_id': ref['document_id'], 'page': ref['page'], 'name': ref['name'], 'quote': ref['text'][:60]}]}]
+    slots = planning.allocate(json.loads(row['config']), topics)
+    db.execute("UPDATE exam_plans SET status='ready',topics=?,blueprint=?,tokens=50 WHERE id=?", (db.dump(topics),db.dump(slots),plan_id))
+planning.run_plan = mock_plan

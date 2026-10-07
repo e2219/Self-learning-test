@@ -77,6 +77,13 @@ def init_db():
             number INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
             PRIMARY KEY(job_id, number)
         );
+        CREATE TABLE IF NOT EXISTS exam_plans (
+            id TEXT PRIMARY KEY, course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+            config TEXT NOT NULL, fingerprint TEXT NOT NULL, materials TEXT NOT NULL,
+            excluded TEXT NOT NULL DEFAULT '[]', topics TEXT NOT NULL DEFAULT '[]',
+            blueprint TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'queued',
+            tokens INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
+        );
         CREATE INDEX IF NOT EXISTS idx_ocr_document ON ocr_jobs(document_id);
         CREATE INDEX IF NOT EXISTS idx_documents_course ON documents(course_id);
         CREATE INDEX IF NOT EXISTS idx_exams_course ON exams(course_id);
@@ -99,6 +106,7 @@ def init_db():
             con.execute("ALTER TABLE ocr_job_pages ADD COLUMN http_status INTEGER")
         con.execute("UPDATE ocr_job_pages SET status='failed',error='服务重启中断识别，请重试。' WHERE status='running'")
         con.execute("UPDATE ocr_jobs SET status='partial' WHERE status IN ('queued','running','cancelling')")
+        con.execute("UPDATE exam_plans SET status='failed',error='服务重启中断了规划，请重新生成分配表。' WHERE status IN ('queued','running')")
         con.execute("UPDATE questions SET status='failed', error='服务重启中断了生成，请重试。' WHERE status IN ('pending','generating')")
         con.execute("UPDATE exams SET status='partial', error='服务重启中断了生成，已完成题目已保存。' WHERE status IN ('queued','generating')")
     try:

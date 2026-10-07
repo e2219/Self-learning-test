@@ -3718,3 +3718,17 @@ textarea::placeholder {
 .material-quality summary {
   cursor: pointer;
 }
+
+.math-text table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+.math-text th,
+.math-text td {
+  border: 1px solid #c8d2c0;
+  padding: 0.6rem;
+  text-align: left;
+}

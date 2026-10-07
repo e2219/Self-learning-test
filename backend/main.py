@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security, ocr, deepseek, materials
+from . import db, limits, security, ocr, deepseek, materials, planning
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
@@ -80,6 +80,14 @@ def exam_detail(exam_id):
     exam["course_name"] = required("courses", exam["course_id"])["name"]
     exam["questions"] = [db.question(q) for q in db.rows("SELECT * FROM questions WHERE exam_id=? ORDER BY position", (exam_id,))]
     exam["total_points"] = sum(q["points"] for q in exam["questions"])
+    if exam["config"].get("plan_id"):
+        plan = planning.detail(exam["config"]["plan_id"])
+        if plan:
+            slots = exam["config"].get("blueprint", [])
+            ready = {q["position"] for q in exam["questions"] if q["status"] == "ready"}
+            exam["coverage"] = [{"title": t["title"], "planned": sum(s["topic_id"] == t["id"] for s in slots),
+                "completed": sum(s["topic_id"] == t["id"] and i in ready for i,s in enumerate(slots, 1))} for t in plan["topics"]]
+            exam["planning_tokens"] = plan["tokens"]
     return exam
 
 
@@ -351,18 +359,57 @@ def retrieval_preview(payload: ExamInput):
     return {"sources": sources, "excluded": excluded}
 
 
+@api.post("/exam-plans", status_code=201)
+async def create_plan(payload: ExamInput, background: BackgroundTasks):
+    validate_ranges(payload)
+    if not security.api_key():
+        raise HTTPException(422, "请先配置 DeepSeek API Key。")
+    if db.one("SELECT id FROM exam_plans WHERE status IN ('queued','running')"):
+        raise HTTPException(409, "已有考点规划正在进行，请等待完成。")
+    config = payload.model_dump()
+    config.update(plan_id=None, blueprint=[])
+    try:
+        refs, excluded = planning.prepare(config)
+    except GenerationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    plan_id = uuid.uuid4().hex
+    db.execute("INSERT INTO exam_plans(id,course_id,config,fingerprint,materials,excluded) VALUES (?,?,?,?,?,?)",
+        (plan_id, payload.course_id, db.dump(config), planning.fingerprint(config, refs), db.dump(refs), db.dump(excluded)))
+    background.add_task(planning.run_plan, plan_id)
+    return planning.detail(plan_id)
+
+
+@api.post("/exam-plans/{plan_id}/cancel")
+def cancel_plan(plan_id: str):
+    required("exam_plans", plan_id)
+    db.execute("UPDATE exam_plans SET status='cancelled' WHERE id=? AND status IN ('queued','running')", (plan_id,))
+    return planning.detail(plan_id)
+
+
+@api.get("/exam-plans/{plan_id}")
+def get_plan(plan_id: str):
+    result = planning.detail(plan_id)
+    if not result:
+        raise HTTPException(404, "规划不存在。")
+    return result
+
+
 @api.post("/exams", status_code=201)
 async def create_exam(payload: ExamInput, background: BackgroundTasks):
     validate_ranges(payload)
     if not security.api_key():
         raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
+    try:
+        planning.validate_blueprint(payload)
+    except GenerationError as exc:
+        raise HTTPException(422, str(exc)) from exc
     # Async route with no await until insert: prevent duplicate scheduling in this process.
     if db.one("SELECT id FROM exams WHERE status IN ('queued','generating')"):
         raise HTTPException(409, "已有试卷正在生成，请等待完成后再创建。")
     exam_id = uuid.uuid4().hex
     with db.connection() as con:
         con.execute("INSERT INTO exams(id,course_id,title,config) VALUES (?,?,?,?)", (exam_id, payload.course_id, payload.title, db.dump(payload.model_dump())))
-        for index, rule in enumerate(plan_questions(payload), 1):
+        for index, rule in enumerate(payload.blueprint or plan_questions(payload), 1):
             con.execute("INSERT INTO questions(id,exam_id,position,type,points) VALUES (?,?,?,?,?)", (uuid.uuid4().hex, exam_id, index, rule.type, rule.points))
     background.add_task(run_generation, exam_id)
     return exam_detail(exam_id)

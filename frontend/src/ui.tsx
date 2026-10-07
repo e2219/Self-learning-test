@@ -3,17 +3,29 @@ import { useEffect, useRef } from 'react';
 import { AlertCircle, ArrowRight, LoaderCircle, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import { Link } from 'react-router-dom';
 
 export function MathText({ children, className = '' }: { children: string; className?: string }) {
-  const text = children
+  const normalized = children
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, s: string) => `$$${s}$$`)
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, s: string) => `$${s}$`);
+  const text = normalized
+    .split(/(\$\$[\s\S]*?\$\$|\$[^\n$]*?\$)/g)
+    .map((segment) =>
+      segment.startsWith('$')
+        ? segment.replace(
+            /\[\[blank:(\d+)\]\]/g,
+            (_, n: string) => `\\underline{\\hspace{2em}}\\text{(${n})}`,
+          )
+        : segment.replace(/\[\[blank:(\d+)\]\]/g, '____（$1）'),
+    )
+    .join('');
   return (
     <div className={`math-text ${className}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkMath]}
+        remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false, trust: false }]]}
         skipHtml
         components={{ img: () => null, a: ({ children }) => <span>{children}</span> }}

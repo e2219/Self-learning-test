@@ -49,7 +49,9 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
   await expect(page.locator('.retrieval-snippet')).toContainText('事件独立性');
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.screenshot({ path: testInfo.outputPath('generator-desktop.png'), fullPage: true });
-  await page.getByRole('button', { name: '生成专属测验' }).click();
+  await page.getByRole('button', { name: '生成考点分配表' }).click();
+  await expect(page.getByLabel('第 1 题考点', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '确认分配并生成测验' }).click();
   await expect(
     page.getByRole('heading', { name: '独立事件 · 第一章巩固练习', exact: true }),
   ).toBeVisible();
@@ -165,7 +167,9 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
   await expect(modal.locator('.katex').first()).toBeVisible();
   await expect(modal.getByRole('img', { name: 'PDF 第 1 页原图' })).toBeVisible();
   expect(
-    await modal.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth),
+    await modal
+      .getByRole('img', { name: 'PDF 第 1 页原图' })
+      .evaluate((img: HTMLImageElement) => img.naturalWidth),
   ).toBeGreaterThan(0);
   await page.screenshot({ path: testInfo.outputPath('ocr-desktop.png'), fullPage: true });
   await modal.getByRole('button', { name: '开始识别', exact: true }).click();
@@ -191,7 +195,69 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByLabel('选择题数量').fill('0');
   await page.getByLabel('计算题数量').fill('1');
-  await page.getByRole('button', { name: '生成专属测验' }).click();
+  await page.getByRole('button', { name: '生成考点分配表' }).click();
+  await expect(page.getByLabel('第 1 题考点', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '确认分配并生成测验' }).click();
   await expect(page.getByText('已生成 1 / 1 题')).toBeVisible({ timeout: 15000 });
   expect(pageErrors).toEqual([]);
+});
+
+test('表格核对 → 局部识别草稿 → 调整考点 → 填空与打印', async ({ page }, testInfo) => {
+  await page.request.post('/api/login', { data: { code: 'browser-test-only' } });
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '表格与考点验证' } })
+  ).json();
+  const pdf = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from tests.test_api import sample_pdf; import sys; sys.stdout.buffer.write(sample_pdf())',
+    ],
+    { cwd: '..' },
+  );
+  const doc = await (
+    await page.request.post(`/api/courses/${course.id}/documents`, {
+      multipart: { file: { name: 'table.pdf', mimeType: 'application/pdf', buffer: pdf } },
+    })
+  ).json();
+  const text =
+    '实验结果，单位 mmol/L\n\n| 组别 | 处理前 | 处理后 |\n| --- | --- | --- |\n| A | 10 | 12 |\n| B | 20 | 22 |\n\n注：温度为 25℃。';
+  await page.request.put(`/api/documents/${doc.id}/pages/1`, { data: { text } });
+  await page.goto(`/courses/${course.id}`);
+  await page.getByRole('button', { name: '预览与修正' }).click();
+  await expect(page.getByText('此页含表格，核对前不用于出题。', { exact: false })).toBeVisible();
+  await expect(page.locator('.page-text table')).toBeVisible();
+  await page.getByRole('button', { name: '已对照原页核对表格' }).click();
+  await expect(page.getByRole('button', { name: '撤销表格确认' })).toBeVisible();
+  await page.getByText('局部高清识别（再次调用 API）', { exact: true }).click();
+  await page.getByRole('button', { name: '识别选定区域' }).click();
+  await expect(page.getByLabel('局部识别草稿')).toContainText('扫描页识别测试');
+  expect((await (await page.request.get(`/api/documents/${doc.id}/pages/1`)).json()).text).toBe(
+    text,
+  );
+  await page.screenshot({ path: testInfo.outputPath('table-review.png'), fullPage: true });
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.goto(`/generate?course=${course.id}`);
+  await page.locator('.scope-title input').check();
+  await page.getByLabel('选择题数量').fill('0');
+  await page.getByLabel('计算题数量').fill('0');
+  await page.getByLabel('填空题数量').fill('1');
+  await page.getByRole('button', { name: '生成考点分配表' }).click();
+  await expect(page.getByLabel('第 1 题考点', { exact: true })).toBeVisible();
+  await page.getByLabel('第 1 题设问目标').fill('核对表头与实验数据');
+  await page.screenshot({ path: testInfo.outputPath('blueprint.png'), fullPage: true });
+  await page.getByRole('button', { name: '确认分配并生成测验' }).click();
+  await expect(page.getByText('已生成 1 / 1 题')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('.question-stem')).toContainText('____（1）');
+  await expect(page.locator('.question-stem .katex')).toBeVisible();
+  await expect(page.locator('.katex-error')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('fill-formula.png'), fullPage: true });
+  await page.getByText(/考点覆盖情况/).click();
+  await expect(page.getByText('事件独立性：分配 1 题，完成 1 题')).toBeVisible();
+  await page.goto(page.url() + '/print');
+  await expect(page.locator('.print-question')).toContainText('____（1）');
+  await expect(page.locator('.katex-error')).toHaveCount(0);
+  await expect(page.locator('.print-solution')).toHaveCount(0);
+  await page.emulateMedia({ media: 'print' });
+  await page.screenshot({ path: testInfo.outputPath('fill-print.png'), fullPage: true });
 });
