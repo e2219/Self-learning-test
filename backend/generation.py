@@ -47,7 +47,7 @@ def retrieve(config: dict, seed=0):
                 candidates.append({"document_id": page["document_id"], "page": page["number"],
                     "name": page["name"], "kind": page["kind"], "text": text})
     if not candidates:
-        raise GenerationError("所选范围没有足够的可用文本。请检查解析内容，或调整 PDF 页码范围。")
+        raise GenerationError("所选范围没有足够的可用文本。扫描教材请先点击「识别所选页」，识别完成并核对后再出题。也可检查解析内容或调整 PDF 页码范围。")
     query = tokens(config.get("focus", ""))
     rng = random.Random(seed)
     rng.shuffle(candidates)

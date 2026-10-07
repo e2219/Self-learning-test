@@ -86,3 +86,9 @@ class ProgressInput(BaseModel):
     self_score: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     is_wrong: bool | None = None
     is_favorite: bool | None = None
+
+
+class OCRInput(BaseModel):
+    start: int = Field(ge=1)
+    end: int = Field(ge=1)
+    force: bool = False

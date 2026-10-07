@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
+import { DocumentOCR } from './OCR';
 import { api, json, useRemote } from './api';
 import type {
   Course,
@@ -49,7 +50,8 @@ export function Generator() {
     [error, setError] = useState(''),
     [docsLoading, setDocsLoading] = useState(false),
     [preview, setPreview] = useState<{ name: string; page: number; text: string }[] | null>(null),
-    [previewBusy, setPreviewBusy] = useState(false);
+    [previewBusy, setPreviewBusy] = useState(false),
+    [ocrScope, setOcrScope] = useState<{ doc: Document; start: number; end: number } | null>(null);
   useEffect(() => {
     if (!courseId && courses.data?.length) setCourseId(courses.data[0].id);
   }, [courses.data, courseId]);
@@ -106,6 +108,18 @@ export function Generator() {
         title="定制这一次练习"
         description="选好范围，设定目标，让题目跟上你的学习节奏。"
       />
+      {ocrScope && (
+        <DocumentOCR
+          {...ocrScope}
+          close={() => {
+            setOcrScope(null);
+            setError('');
+            api<Document[]>(`/courses/${courseId}/documents`)
+              .then(setDocs)
+              .catch((e) => setError(e.message));
+          }}
+        />
+      )}
       {error && <Notice tone="error">{error}</Notice>}
       {settings.data && !settings.data.has_key && (
         <Notice>
@@ -217,10 +231,26 @@ export function Generator() {
                         <span>
                           {doc.name}
                           <small>
-                            {doc.page_count} 页 · {doc.kind}
+                            {doc.page_count} 页 · {doc.kind} · {doc.usable_pages ?? 0} 页有可用文字
                           </small>
                         </span>
                       </label>
+                      {scope && (
+                        <div className="ocr-scope-action">
+                          <span>
+                            {doc.usable_pages === 0
+                              ? '扫描教材需先识别文字与公式，再生成测验。'
+                              : '选中范围若为扫描页或公式提取不完整，可先识别。'}
+                          </span>
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => setOcrScope({ doc, start: scope.start, end: scope.end })}
+                          >
+                            识别所选页
+                          </button>
+                        </div>
+                      )}
                       {scope && (
                         <div className="scope-fields">
                           <label>

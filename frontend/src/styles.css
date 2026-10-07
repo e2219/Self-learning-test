@@ -3600,3 +3600,108 @@ textarea::placeholder {
     widows: 3;
   }
 }
+
+/* Selected-page OCR and side-by-side formula verification. */
+.modal:has(.ocr-comparison) {
+  width: min(1120px, 100%);
+  max-width: 1120px;
+}
+.ocr-document-name {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.ocr-range {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 20px 0 8px;
+}
+.ocr-range label {
+  flex: 1;
+  min-width: 120px;
+  margin: 0;
+}
+.ocr-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.ocr-checkbox input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.ocr-progress {
+  padding: 18px;
+  background: #f2f5ec;
+  border-radius: 12px;
+  margin: 20px 0;
+}
+.ocr-progress progress {
+  display: block;
+  width: 100%;
+  accent-color: #315d50;
+  margin: 14px 0;
+}
+.ocr-page-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ocr-page-list > div {
+  max-width: 100%;
+}
+.ocr-page-list small {
+  display: block;
+  max-width: 320px;
+  color: #66756b;
+}
+.ocr-page-list .ocr-page-error {
+  color: #a24b38;
+}
+.ocr-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  align-items: start;
+  margin-top: 16px;
+}
+.ocr-comparison > div {
+  min-width: 0;
+}
+.ocr-comparison img {
+  width: 100%;
+  border: 1px solid #e1e6dc;
+  border-radius: 8px;
+}
+.ocr-comparison .page-text {
+  max-height: 760px;
+  overflow: auto;
+  padding: 16px;
+}
+.ocr-scope-action {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  font-size: 13px;
+  color: #66756b;
+}
+.document-card-bottom {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+@media (max-width: 760px) {
+  .ocr-comparison {
+    grid-template-columns: 1fr;
+  }
+  .ocr-comparison img {
+    max-height: 60vh;
+    object-fit: contain;
+  }
+}

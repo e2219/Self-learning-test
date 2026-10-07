@@ -11,9 +11,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security
+from . import db, limits, security, ocr
 from .generation import GenerationError, active_exams, plan_questions, retrieve, run_generation, validate_content
-from .models import CourseInput, ExamInput, LoginInput, PageInput, ProgressInput, QuestionEdit, SettingsInput
+from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
 
 
@@ -100,6 +100,7 @@ def logout(request: Request, response: Response):
 def settings():
     return {"has_key": bool(security.api_key()), "key_from_env": bool(os.environ.get("DEEPSEEK_API_KEY")),
         "model": db.setting("model", "deepseek-chat"),
+        "ocr_model": ocr.MODEL, "ocr_max_pages": ocr.MAX_PAGES,
         "max_pdf_bytes": limits.MAX_PDF_BYTES, "max_pdf_pages": limits.MAX_PDF_PAGES}
 
 
@@ -146,6 +147,8 @@ def delete_course(course_id: str):
     for exam in db.rows("SELECT id FROM exams WHERE course_id=?", (course_id,)):
         ensure_idle(exam["id"])
     docs = db.rows("SELECT id FROM documents WHERE course_id=?", (course_id,))
+    for doc in docs:
+        ensure_ocr_idle(doc["id"])
     db.execute("DELETE FROM courses WHERE id=?", (course_id,))
     for doc in docs:
         (db.DATA_DIR / "uploads" / f"{doc['id']}.pdf").unlink(missing_ok=True)
@@ -155,7 +158,10 @@ def delete_course(course_id: str):
 @api.get("/courses/{course_id}/documents")
 def documents(course_id: str):
     required("courses", course_id)
-    return [db.decode(d, ("outline", "warnings")) for d in db.rows("SELECT * FROM documents WHERE course_id=? ORDER BY created_at DESC", (course_id,))]
+    return [db.decode(d, ("outline", "warnings")) for d in db.rows("""SELECT d.*,
+        (SELECT count(*) FROM pages p WHERE p.document_id=d.id AND length(trim(p.text))>=40) AS usable_pages,
+        (SELECT count(*) FROM pages p WHERE p.document_id=d.id AND p.ocr_done=1) AS ocr_pages
+        FROM documents d WHERE course_id=? ORDER BY created_at DESC""", (course_id,))]
 
 
 @api.post("/courses/{course_id}/documents", status_code=201)
@@ -215,12 +221,80 @@ def update_page(document_id: str, number: int, payload: PageInput):
 @api.delete("/documents/{document_id}")
 def delete_document(document_id: str):
     doc = required("documents", document_id)
+    ensure_ocr_idle(document_id)
     for exam in db.rows("SELECT config FROM exams WHERE course_id=?", (doc["course_id"],)):
         if any(r["document_id"] == document_id for r in json.loads(exam["config"])["ranges"]):
             raise HTTPException(409, "这份资料已被试卷引用。为保留来源和重试能力，请先删除相关试卷。")
     db.execute("DELETE FROM documents WHERE id=?", (document_id,))
     (db.DATA_DIR / "uploads" / f"{document_id}.pdf").unlink(missing_ok=True)
     return {"ok": True}
+
+
+def ensure_ocr_idle(document_id):
+    if ocr.is_busy(document_id):
+        raise HTTPException(409, "这份资料正在识别，请等待完成或停止识别后再删除。")
+
+
+@api.get("/documents/{document_id}/pages/{number}/image")
+def page_image(document_id: str, number: int):
+    document_page(document_id, number)
+    try:
+        data = ocr.render_page(db.DATA_DIR / "uploads" / f"{document_id}.pdf", number)
+    except ocr.OCRError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(data, media_type="image/jpeg")
+
+
+@api.get("/documents/{document_id}/ocr")
+def latest_ocr(document_id: str):
+    required("documents", document_id)
+    job = db.one("SELECT id FROM ocr_jobs WHERE document_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1", (document_id,))
+    return ocr.detail(job["id"]) if job else None
+
+
+@api.post("/documents/{document_id}/ocr", status_code=201)
+async def start_ocr(document_id: str, payload: OCRInput, background: BackgroundTasks):
+    doc = required("documents", document_id)
+    if payload.end < payload.start or payload.end > doc["page_count"]:
+        raise HTTPException(422, "OCR 页码范围无效，请使用 PDF 实际页码。")
+    if payload.end - payload.start + 1 > ocr.MAX_PAGES:
+        raise HTTPException(422, f"每次最多识别 {ocr.MAX_PAGES} 页，请分批选择。")
+    if not security.api_key():
+        raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
+    if ocr.is_busy():
+        raise HTTPException(409, "已有文字识别任务正在进行，请等待完成或停止后再开始。")
+    job_id = uuid.uuid4().hex
+    with db.connection() as con:
+        con.execute("INSERT INTO ocr_jobs(id,document_id,start,end,force) VALUES (?,?,?,?,?)", (job_id, document_id, payload.start, payload.end, payload.force))
+        con.executemany("INSERT INTO ocr_job_pages(job_id,number) VALUES (?,?)", [(job_id, n) for n in range(payload.start, payload.end + 1)])
+    background.add_task(ocr.run_job, job_id)
+    return ocr.detail(job_id)
+
+
+@api.get("/ocr/{job_id}")
+def get_ocr(job_id: str):
+    required("ocr_jobs", job_id)
+    return ocr.detail(job_id)
+
+
+@api.post("/ocr/{job_id}/cancel")
+async def cancel_ocr(job_id: str):
+    required("ocr_jobs", job_id)
+    db.execute("UPDATE ocr_jobs SET status='cancelling' WHERE id=? AND status IN ('queued','running')", (job_id,))
+    return ocr.detail(job_id)
+
+
+@api.post("/ocr/{job_id}/retry")
+async def retry_ocr(job_id: str, background: BackgroundTasks):
+    required("ocr_jobs", job_id)
+    if ocr.is_busy() or job_id in ocr.active_jobs:
+        raise HTTPException(409, "已有文字识别任务正在进行，请稍后重试。")
+    if not security.api_key():
+        raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
+    db.execute("UPDATE ocr_job_pages SET status='pending',error='' WHERE job_id=? AND status NOT IN ('ready','skipped')", (job_id,))
+    db.execute("UPDATE ocr_jobs SET status='queued' WHERE id=?", (job_id,))
+    background.add_task(ocr.run_job, job_id)
+    return ocr.detail(job_id)
 
 
 def validate_ranges(payload):

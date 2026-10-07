@@ -66,10 +66,26 @@ def init_db():
             user_answer TEXT NOT NULL, score REAL NOT NULL, snapshot TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
         );
+        CREATE TABLE IF NOT EXISTS ocr_jobs (
+            id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            start INTEGER NOT NULL, end INTEGER NOT NULL, force INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'queued', tokens INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        );
+        CREATE TABLE IF NOT EXISTS ocr_job_pages (
+            job_id TEXT NOT NULL REFERENCES ocr_jobs(id) ON DELETE CASCADE,
+            number INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(job_id, number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ocr_document ON ocr_jobs(document_id);
         CREATE INDEX IF NOT EXISTS idx_documents_course ON documents(course_id);
         CREATE INDEX IF NOT EXISTS idx_exams_course ON exams(course_id);
         CREATE INDEX IF NOT EXISTS idx_questions_exam ON questions(exam_id);
         """)
+        if "ocr_done" not in {r["name"] for r in con.execute("PRAGMA table_info(pages)")}:
+            con.execute("ALTER TABLE pages ADD COLUMN ocr_done INTEGER NOT NULL DEFAULT 0")
+        con.execute("UPDATE ocr_job_pages SET status='failed',error='服务重启中断识别，请重试。' WHERE status='running'")
+        con.execute("UPDATE ocr_jobs SET status='partial' WHERE status IN ('queued','running','cancelling')")
         con.execute("UPDATE questions SET status='failed', error='服务重启中断了生成，请重试。' WHERE status IN ('pending','generating')")
         con.execute("UPDATE exams SET status='partial', error='服务重启中断了生成，已完成题目已保存。' WHERE status IN ('queued','generating')")
     try:

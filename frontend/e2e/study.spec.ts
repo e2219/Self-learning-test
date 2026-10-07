@@ -126,3 +126,69 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
   await expect(page.getByLabel('API Key', { exact: true })).toHaveValue('');
   expect(pageErrors).toEqual([]);
 });
+
+test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，手机无溢出', async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  await page.goto('/');
+  await page.getByLabel('访问口令').fill('browser-test-only');
+  await page.getByRole('button', { name: '开始学习', exact: true }).click();
+  await page.getByRole('link', { name: '我的课程', exact: true }).click();
+  await page.getByRole('button', { name: '添加课程', exact: true }).click();
+  await page.getByLabel('课程名称').fill('扫描教材 OCR 测试');
+  await page.getByRole('dialog').getByRole('button', { name: '创建课程', exact: true }).click();
+  const pdf = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from pypdf import PdfWriter; import sys,io; w=PdfWriter(); w.add_blank_page(width=595,height=842); b=io.BytesIO(); w.write(b); sys.stdout.buffer.write(b.getvalue())',
+    ],
+    { cwd: '..' },
+  );
+  await page
+    .locator('input[type=file]')
+    .setInputFiles({ name: '扫描测试.pdf', mimeType: 'application/pdf', buffer: pdf });
+  await expect(page.getByText('未提取到正文，请先识别扫描页')).toBeVisible();
+  await page.getByRole('link', { name: '生成测验', exact: true }).click();
+  await page.locator('.scope-title input').check();
+  await page.getByRole('button', { name: '预览检索片段' }).click();
+  await expect(page.getByText(/所选范围没有足够的可用文本/)).toBeVisible();
+  await page.getByRole('button', { name: '识别所选页', exact: true }).click();
+  const modal = page.getByRole('dialog');
+  await expect(modal.getByLabel('识别开始页')).toHaveValue('1');
+  await expect(modal.getByLabel('识别结束页')).toHaveValue('1');
+  await modal.getByRole('button', { name: '开始识别', exact: true }).click();
+  await expect(modal.getByText('已完成 · 第 1–1 页 · 1/1 页')).toBeVisible({ timeout: 10000 });
+  await expect(modal.locator('.page-text')).toContainText('扫描页识别测试');
+  await expect(modal.locator('.katex').first()).toBeVisible();
+  await expect(modal.getByRole('img', { name: 'PDF 第 1 页原图' })).toBeVisible();
+  expect(
+    await modal.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth),
+  ).toBeGreaterThan(0);
+  await page.screenshot({ path: testInfo.outputPath('ocr-desktop.png'), fullPage: true });
+  await modal.getByRole('button', { name: '开始识别', exact: true }).click();
+  await expect(modal.getByRole('button', { name: '第 1 页 · 复用已有内容' })).toBeVisible();
+  await expect(modal.getByText('本任务累计 0 tokens')).toBeVisible();
+  await modal.getByRole('button', { name: '修正此页内容' }).click();
+  await modal
+    .getByLabel('OCR 页面修正')
+    .fill(
+      '人工核对后的教材内容：若事件 A 与 B 相互独立，则 $P(A\\cap B)=P(A)P(B)$。注意独立与互斥的区别。',
+    );
+  await modal.getByRole('button', { name: '保存修正', exact: true }).click();
+  await expect(modal.getByText('页面修正已保存。')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath('ocr-mobile.png'), fullPage: true });
+  expect(await modal.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await modal.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(page.getByText(/所选范围没有足够的可用文本/)).toHaveCount(0);
+  await expect(page.getByText('1 页 · 教材 · 1 页有可用文字')).toBeVisible();
+  await page.getByRole('button', { name: '预览检索片段' }).click();
+  await expect(page.locator('.retrieval-snippet')).toContainText('人工核对后的教材内容');
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByLabel('选择题数量').fill('0');
+  await page.getByLabel('计算题数量').fill('1');
+  await page.getByRole('button', { name: '生成专属测验' }).click();
+  await expect(page.getByText('已生成 1 / 1 题')).toBeVisible({ timeout: 15000 });
+  expect(pageErrors).toEqual([]);
+});

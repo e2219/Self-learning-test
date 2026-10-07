@@ -19,6 +19,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
+import { DocumentOCR } from './OCR';
 import { api, date, json, upload as uploadFile, useRemote } from './api';
 import type { Course, Document, Exam, Page, Settings } from './types';
 import { Empty, Loading, MathText, Modal, Notice, PageHeading, SectionHeading, Status } from './ui';
@@ -454,7 +455,8 @@ function DocumentPreview({ doc, close }: { doc: Document; close: () => void }) {
           ) : (
             <div className="page-text">
               <MathText>
-                {page.data?.text || '此页未提取到文字。可以手动补充，或选择其他页出题。'}
+                {page.data?.text ||
+                  '此页未提取到文字。请关闭预览，在资料卡片点击「文字与公式识别」，也可手动补充。'}
               </MathText>
             </div>
           )}
@@ -478,6 +480,7 @@ export function CoursePage() {
     [message, setMessage] = useState(''),
     [kind, setKind] = useState('教材'),
     [preview, setPreview] = useState<Document | null>(null),
+    [ocrDoc, setOcrDoc] = useState<Document | null>(null),
     [manage, setManage] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const maxBytes = settings.data?.max_pdf_bytes ?? 1024 * 1024 * 1024;
@@ -660,7 +663,14 @@ export function CoursePage() {
                     </button>
                   </div>
                   <div className="document-card-bottom">
-                    <span>请检查公式和上下标的解析结果</span>
+                    <span>
+                      {doc.usable_pages
+                        ? `${doc.usable_pages}/${doc.page_count} 页有可用文字`
+                        : '未提取到正文，请先识别扫描页'}
+                    </span>
+                    <button className="text-link" onClick={() => setOcrDoc(doc)}>
+                      文字与公式识别
+                    </button>
                     <button className="text-link" onClick={() => setPreview(doc)}>
                       预览与修正
                       <ArrowRight size={14} />
@@ -678,7 +688,7 @@ export function CoursePage() {
             <ol>
               <li>
                 <strong>优先使用文字型 PDF</strong>
-                <p>扫描版暂不支持自动识别，可手动补充页面文字。</p>
+                <p>扫描教材可使用「文字与公式识别」，再对照原页核验。</p>
               </li>
               <li>
                 <strong>检查公式与页码</strong>
@@ -712,6 +722,15 @@ export function CoursePage() {
           )}
         </aside>
       </div>
+      {ocrDoc && (
+        <DocumentOCR
+          doc={ocrDoc}
+          close={() => {
+            setOcrDoc(null);
+            void docs.reload();
+          }}
+        />
+      )}
       {preview && <DocumentPreview doc={preview} close={() => setPreview(null)} />}
     </>
   );

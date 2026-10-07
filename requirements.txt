@@ -4,3 +4,5 @@ httpx==0.28.1
 pypdf==6.19.0
 python-multipart==0.0.32
 pydantic==2.13.5
+pypdfium2==5.14.0
+Pillow==12.3.0

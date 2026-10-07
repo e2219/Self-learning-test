@@ -11,6 +11,8 @@ export type Document = {
   name: string;
   kind: string;
   page_count: number;
+  usable_pages: number;
+  ocr_pages: number;
   warnings: string[];
   outline: { title: string; page: number; depth: number }[];
 };
@@ -77,6 +79,8 @@ export type Settings = {
   has_key: boolean;
   key_from_env: boolean;
   model: string;
+  ocr_model: string;
+  ocr_max_pages: number;
   max_pdf_bytes: number;
   max_pdf_pages: number;
 };

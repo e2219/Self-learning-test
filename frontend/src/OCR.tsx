@@ -1,0 +1,325 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api, json, useRemote } from './api';
+import type { Document, Page, Settings } from './types';
+import { Loading, MathText, Modal, Notice } from './ui';
+
+type Job = {
+  id: string;
+  start: number;
+  end: number;
+  status: string;
+  tokens: number;
+  pages: { number: number; status: string; error: string }[];
+};
+const names: Record<string, string> = {
+  queued: '等待识别',
+  running: '识别中',
+  pending: '等待识别',
+  ready: '已完成',
+  skipped: '复用已有内容',
+  partial: '待重试',
+  cancelling: '正在停止',
+  cancelled: '已停止',
+  failed: '识别失败',
+};
+const running = (job: Job | null) =>
+  !!job && ['queued', 'running', 'cancelling'].includes(job.status);
+
+export function DocumentOCR({
+  doc,
+  start = 1,
+  end,
+  close,
+}: {
+  doc: Document;
+  start?: number;
+  end?: number;
+  close: () => void;
+}) {
+  const [from, setFrom] = useState(start),
+    [to, setTo] = useState(end ?? Math.min(start + 4, doc.page_count));
+  const [force, setForce] = useState(false),
+    [job, setJob] = useState<Job | null>(null);
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [loaded, setLoaded] = useState(false);
+  const [number, setNumber] = useState(start),
+    [editing, setEditing] = useState(false),
+    [text, setText] = useState('');
+  const [saved, setSaved] = useState('');
+  const settings = useRemote<Settings>('/settings');
+  const page = useRemote<Page>(`/documents/${doc.id}/pages/${number}`);
+  const max = settings.data?.ocr_max_pages ?? 20;
+  useEffect(() => {
+    let live = true;
+    api<Job | null>(`/documents/${doc.id}/ocr`)
+      .then((j) => {
+        if (live) setJob(j);
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      })
+      .finally(() => {
+        if (live) setLoaded(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [doc.id]);
+  useEffect(() => {
+    if (!running(job)) return;
+    let live = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const updated = await api<Job>(`/ocr/${job!.id}`);
+        if (!live) return;
+        setJob(updated);
+        await page.reload();
+      } catch (e) {
+        if (live) {
+          setError((e as Error).message);
+          setJob((j) => (j ? { ...j } : j));
+        }
+      }
+    }, 1800);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [job, page.reload]);
+  async function act(path: string, body?: object) {
+    setBusy(true);
+    setError('');
+    setSaved('');
+    try {
+      setJob(await api<Job>(path, json('POST', body)));
+      await page.reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function selectPage(value: number) {
+    if (value < 1 || value > doc.page_count || !Number.isInteger(value)) return;
+    if (editing && !window.confirm('切换页面会放弃未保存的修正，继续吗？')) return;
+    setEditing(false);
+    setSaved('');
+    setNumber(value);
+  }
+  const done = job?.pages.filter((p) => ['ready', 'skipped'].includes(p.status)).length ?? 0;
+  return (
+    <Modal title="文字与公式识别" close={close}>
+      <p className="ocr-document-name">{doc.name}</p>
+      <Notice>
+        使用 DeepSeek Flash 识别正文和 LaTeX 公式，复用设置中的 API Key。所选页面图片将发送至
+        DeepSeek，按 API 用量计费。建议先试 1–5 页，核对效果后再扩大范围。
+      </Notice>
+      {settings.data && !settings.data.has_key && (
+        <Notice>
+          <Link to="/settings">先前往设置配置 API Key</Link>
+        </Notice>
+      )}
+      <div className="ocr-range">
+        <label>
+          识别开始页
+          <input
+            type="number"
+            min={1}
+            max={doc.page_count}
+            value={from}
+            disabled={running(job) || busy}
+            onChange={(e) => setFrom(Number(e.target.value))}
+          />
+        </label>
+        <label>
+          识别结束页
+          <input
+            type="number"
+            min={from}
+            max={doc.page_count}
+            value={to}
+            disabled={running(job) || busy}
+            onChange={(e) => setTo(Number(e.target.value))}
+          />
+        </label>
+        <button
+          className="button primary"
+          disabled={
+            !loaded ||
+            busy ||
+            running(job) ||
+            !settings.data?.has_key ||
+            from < 1 ||
+            to < from ||
+            to > doc.page_count ||
+            to - from + 1 > max
+          }
+          onClick={() => act(`/documents/${doc.id}/ocr`, { start: from, end: to, force })}
+        >
+          开始识别
+        </button>
+      </div>
+      <p className="field-help">
+        使用 PDF 实际页序，每次最多 {max} 页。默认跳过已有文字或已识别的页面；手动修正始终保留。
+      </p>
+      <label className="ocr-checkbox">
+        <input
+          type="checkbox"
+          checked={force}
+          disabled={running(job) || busy}
+          onChange={(e) => setForce(e.target.checked)}
+        />
+        重新识别已有文字的页面（再次计费，不覆盖手动修正）
+      </label>
+      {to - from + 1 > max && <Notice tone="error">范围超过 {max} 页，请分批选择。</Notice>}
+      {(error || settings.error) && <Notice tone="error">{error || settings.error}</Notice>}
+      {job && (
+        <section className="ocr-progress" aria-live="polite">
+          <strong>
+            {names[job.status]} · 第 {job.start}–{job.end} 页 · {done}/{job.pages.length} 页
+          </strong>
+          <progress aria-label="识别进度" value={done} max={job.pages.length} />
+          <p className="field-help">
+            关闭窗口后继续在电脑后台识别；重新打开可查看进度。停止会在当前页调用结束后生效。已完成内容保存在本机。
+          </p>
+          <div className="button-group">
+            {running(job) ? (
+              <button
+                className="button secondary"
+                disabled={busy || job.status === 'cancelling'}
+                onClick={() => act(`/ocr/${job.id}/cancel`)}
+              >
+                停止后续识别
+              </button>
+            ) : (
+              ['partial', 'cancelled'].includes(job.status) && (
+                <button
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => act(`/ocr/${job.id}/retry`)}
+                >
+                  重试未完成页
+                </button>
+              )
+            )}
+            <span className="muted">本任务累计 {job.tokens.toLocaleString()} tokens</span>
+          </div>
+          <div className="ocr-page-list">
+            {job.pages.map((p) => (
+              <div key={p.number}>
+                <button
+                  className={`button ${number === p.number ? 'secondary' : 'ghost'}`}
+                  onClick={() => selectPage(p.number)}
+                >
+                  第 {p.number} 页 · {names[p.status]}
+                </button>
+                {p.error && (
+                  <small className={p.status === 'failed' ? 'ocr-page-error' : ''}>{p.error}</small>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      <div className="preview-toolbar">
+        <label className="inline-label">
+          核对 PDF 页码
+          <input
+            type="number"
+            min={1}
+            max={doc.page_count}
+            value={number}
+            onChange={(e) => selectPage(Number(e.target.value))}
+          />
+        </label>
+        <a
+          className="text-link"
+          href={`/api/documents/${doc.id}/file#page=${number}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          打开原 PDF
+        </a>
+      </div>
+      {page.error && <Notice tone="error">{page.error}</Notice>}
+      {page.data?.warning && <Notice>{page.data.warning}</Notice>}
+      <div className="ocr-comparison">
+        <div>
+          <h3>原始页面</h3>
+          <img
+            key={number}
+            src={`/api/documents/${doc.id}/pages/${number}/image`}
+            alt={`PDF 第 ${number} 页原图`}
+          />
+        </div>
+        <div>
+          <div className="section-heading">
+            <h3>识别文本 {page.data?.edited ? '· 已修正' : ''}</h3>
+            {!editing && (
+              <button
+                className="text-link"
+                disabled={page.loading || !page.data}
+                onClick={() => {
+                  setText(page.data?.text || '');
+                  setEditing(true);
+                  setSaved('');
+                }}
+              >
+                修正此页内容
+              </button>
+            )}
+          </div>
+          {editing ? (
+            <>
+              <textarea
+                className="page-editor"
+                aria-label="OCR 页面修正"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={16}
+                maxLength={50000}
+              />
+              <p className="field-help">公式可写成 $P(A)=0.5$；修改后会用于后续出题。</p>
+              <div className="button-group">
+                <button
+                  className="button primary"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError('');
+                    try {
+                      await api(`/documents/${doc.id}/pages/${number}`, json('PUT', { text }));
+                      await page.reload();
+                      setEditing(false);
+                      setSaved('页面修正已保存。');
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  保存修正
+                </button>
+                <button className="button ghost" onClick={() => setEditing(false)}>
+                  取消修正
+                </button>
+              </div>
+            </>
+          ) : page.loading && !page.data ? (
+            <Loading />
+          ) : (
+            <div className="page-text">
+              <MathText>
+                {page.data?.text || '此页尚无可用文字。识别后会在这里显示正文和公式。'}
+              </MathText>
+            </div>
+          )}
+          {saved && <Notice tone="success">{saved}</Notice>}
+        </div>
+      </div>
+    </Modal>
+  );
+}

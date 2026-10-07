@@ -59,7 +59,7 @@ def extract_pdf(stream: BinaryIO):
             try:
                 text = (page.extract_text() or "").replace("\x00", "")
                 text = re.sub(r"[ \t]+", " ", text).strip()[:50_000]
-                warning = "文本较少，可能是扫描页或图片页，请检查或手动补充。" if len(text) < 40 else ""
+                warning = "文本较少，可能是扫描页或图片页，可使用「文字与公式识别」或手动补充。" if len(text) < 40 else ""
                 if "�" in text:
                     warning = "存在无法识别的字符，请检查公式和文字。"
             except Exception:
@@ -67,7 +67,7 @@ def extract_pdf(stream: BinaryIO):
             pages.append({"number": index, "text": text, "warning": warning})
         low = sum(bool(p["warning"]) for p in pages)
         if low:
-            warnings.append(f"{low} 页需要检查，当前不包含扫描页 OCR。")
+            warnings.append(f"{low} 页需要检查，扫描页可使用「文字与公式识别」。")
         warnings.append("公式、上下标和数学符号可能在提取时失真，请预览出题范围内的内容。")
         outline = []
 

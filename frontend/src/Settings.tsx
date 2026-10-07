@@ -29,7 +29,7 @@ export function SettingsPage() {
               </div>
               <div>
                 <h2>DeepSeek API</h2>
-                <p>用于生成题目、参考答案和逐步解析。</p>
+                <p>用于识别扫描页、生成题目、参考答案和逐步解析。</p>
               </div>
             </div>
             {(error || settings.error) && <Notice tone="error">{error || settings.error}</Notice>}
@@ -55,7 +55,7 @@ export function SettingsPage() {
                   );
                   setKey('');
                   await settings.reload();
-                  setMessage('设置已保存。密钥有效性会在首次生成时验证。');
+                  setMessage('设置已保存。密钥有效性会在首次识别或出题时验证。');
                 } catch (err) {
                   setError((err as Error).message);
                 } finally {
@@ -93,6 +93,10 @@ export function SettingsPage() {
               </label>
               <p className="field-help">
                 不同模型的速度和费用不同。复杂证明建议尝试推理模型，并人工核验解答。
+              </p>
+              <p className="field-help">
+                文字与公式识别固定使用 DeepSeek Flash 图片能力，复用此密钥；出题模型的选择不影响
+                OCR。
               </p>
               <div className="button-group">
                 <button className="button primary" type="submit" disabled={busy}>
@@ -139,7 +143,10 @@ export function SettingsPage() {
                 <ShieldCheck size={20} />
                 <div>
                   <strong>API 请求范围</strong>
-                  <p>出题时会把选中的相关教材片段、出题要求和已有题干发送给 DeepSeek。</p>
+                  <p>
+                    出题时发送相关教材文本、出题要求和已有题干；启动 OCR 时发送选定页面的图片给
+                    DeepSeek。
+                  </p>
                 </div>
               </div>
               <div className="settings-note">
