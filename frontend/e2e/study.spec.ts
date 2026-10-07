@@ -59,6 +59,8 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
   const examUrl = page.url();
   await expect(page.locator('.solution')).toHaveCount(0);
   const first = page.locator('.question-card').first();
+  await expect(first.locator('.knowledge-label .katex')).toHaveCount(3);
+  await expect(first.locator('.knowledge-label .katex-error')).toHaveCount(0);
   await first.locator('.option').first().click();
   await first.getByRole('button', { name: '保存作答' }).click();
   await first.getByRole('button', { name: '查看参考答案与解析' }).click();
@@ -118,6 +120,9 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
     true,
   );
   const mobileQuestion = page.locator('.question-card').first();
+  await expect(mobileQuestion.locator('.knowledge-label .katex')).toHaveCount(3);
+  const knowledgeBox = await mobileQuestion.locator('.knowledge-label').boundingBox();
+  expect(knowledgeBox!.x + knowledgeBox!.width).toBeLessThanOrEqual(390);
   await mobileQuestion.getByRole('button', { name: '重新作答' }).click();
   await expect(mobileQuestion.locator('.solution')).toHaveCount(0);
   await expect(mobileQuestion.locator('.option.chosen')).toHaveCount(0);

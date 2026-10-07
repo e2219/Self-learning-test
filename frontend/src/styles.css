@@ -1929,7 +1929,9 @@ textarea::placeholder {
 .knowledge-label {
   font-size: 9px;
   color: #9cab8c;
+  min-width: 0;
   max-width: 43%;
+  overflow-x: auto;
   text-align: right;
 }
 .solution {
@@ -3348,6 +3350,7 @@ textarea::placeholder {
     font-size: 8px;
   }
   .question-bottom {
+    flex-direction: column;
     align-items: flex-start;
     gap: 7px;
   }
@@ -3357,6 +3360,8 @@ textarea::placeholder {
   }
   .knowledge-label {
     font-size: 9px;
+    max-width: 100%;
+    text-align: left;
   }
   .solution {
     padding: 16px 14px;

@@ -566,7 +566,7 @@ export function QuestionCard({
                   {revealed ? <EyeOff size={16} /> : <Eye size={16} />}{' '}
                   {revealed ? '收起参考答案' : '查看参考答案与解析'}
                 </button>
-                <span className="knowledge-label">{q.knowledge}</span>
+                <MathText className="knowledge-label">{q.knowledge}</MathText>
               </div>
               {revealed && (
                 <div className="solution">
