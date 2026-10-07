@@ -84,6 +84,11 @@ def init_db():
         """)
         if "ocr_done" not in {r["name"] for r in con.execute("PRAGMA table_info(pages)")}:
             con.execute("ALTER TABLE pages ADD COLUMN ocr_done INTEGER NOT NULL DEFAULT 0")
+        ocr_columns = {r["name"] for r in con.execute("PRAGMA table_info(ocr_job_pages)")}
+        if "stage" not in ocr_columns:
+            con.execute("ALTER TABLE ocr_job_pages ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
+        if "http_status" not in ocr_columns:
+            con.execute("ALTER TABLE ocr_job_pages ADD COLUMN http_status INTEGER")
         con.execute("UPDATE ocr_job_pages SET status='failed',error='服务重启中断识别，请重试。' WHERE status='running'")
         con.execute("UPDATE ocr_jobs SET status='partial' WHERE status IN ('queued','running','cancelling')")
         con.execute("UPDATE questions SET status='failed', error='服务重启中断了生成，请重试。' WHERE status IN ('pending','generating')")

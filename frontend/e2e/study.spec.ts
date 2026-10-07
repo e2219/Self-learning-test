@@ -124,6 +124,8 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
   await page.goto('/settings');
   await expect(page.getByText('已保存 API Key')).toBeVisible();
   await expect(page.getByLabel('API Key', { exact: true })).toHaveValue('');
+  await page.getByRole('button', { name: '检查 DeepSeek 连接', exact: true }).click();
+  await expect(page.getByText(/DeepSeek 连接正常（HTTP 200）/)).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
 
@@ -169,6 +171,7 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
   await modal.getByRole('button', { name: '开始识别', exact: true }).click();
   await expect(modal.getByRole('button', { name: '第 1 页 · 复用已有内容' })).toBeVisible();
   await expect(modal.getByText('本任务累计 0 tokens')).toBeVisible();
+  await expect(modal.getByText('复用已有内容，本次未调用 API')).toBeVisible();
   await modal.getByRole('button', { name: '修正此页内容' }).click();
   await modal
     .getByLabel('OCR 页面修正')

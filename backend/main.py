@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security, ocr
+from . import db, limits, security, ocr, deepseek
 from .generation import GenerationError, active_exams, plan_questions, retrieve, run_generation, validate_content
 from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
@@ -102,6 +102,14 @@ def settings():
         "model": db.setting("model", "deepseek-chat"),
         "ocr_model": ocr.MODEL, "ocr_max_pages": ocr.MAX_PAGES,
         "max_pdf_bytes": limits.MAX_PDF_BYTES, "max_pdf_pages": limits.MAX_PDF_PAGES}
+
+
+@api.post("/settings/test-connection")
+async def test_connection():
+    try:
+        return await deepseek.check_connection(ocr.MODEL)
+    except deepseek.ClientSetupError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @api.put("/settings")

@@ -10,7 +10,13 @@ type Job = {
   end: number;
   status: string;
   tokens: number;
-  pages: { number: number; status: string; error: string }[];
+  pages: {
+    number: number;
+    status: string;
+    error: string;
+    stage: string;
+    http_status: number | null;
+  }[];
 };
 const names: Record<string, string> = {
   queued: '等待识别',
@@ -22,6 +28,15 @@ const names: Record<string, string> = {
   cancelling: '正在停止',
   cancelled: '已停止',
   failed: '识别失败',
+};
+const stages: Record<string, string> = {
+  rendering: '渲染页面，尚未开始 API 请求',
+  client_setup: '初始化网络客户端，尚未开始 API 请求',
+  requesting: '已进入请求步骤，尚未记录接口响应',
+  response_received: '已收到接口响应',
+  saving: '正在保存识别结果',
+  saved: '识别结果已保存',
+  cached: '复用已有内容，本次未调用 API',
 };
 const running = (job: Job | null) =>
   !!job && ['queued', 'running', 'cancelling'].includes(job.status);
@@ -206,6 +221,11 @@ export function DocumentOCR({
             )}
             <span className="muted">本任务累计 {job.tokens.toLocaleString()} tokens</span>
           </div>
+          {job.tokens === 0 && (
+            <p className="field-help">
+              0 tokens 表示尚未记录到接口用量，不等于确认未调用或未计费。请查看每页的调用阶段。
+            </p>
+          )}
           <div className="ocr-page-list">
             {job.pages.map((p) => (
               <div key={p.number}>
@@ -215,6 +235,15 @@ export function DocumentOCR({
                 >
                   第 {p.number} 页 · {names[p.status]}
                 </button>
+                {p.stage && (
+                  <small>
+                    {stages[p.stage] || p.stage}
+                    {p.http_status != null ? ` · HTTP ${p.http_status}` : ''}
+                  </small>
+                )}
+                {!p.stage && p.status === 'failed' && (
+                  <small>旧任务未记录调用阶段，重试后可查看。</small>
+                )}
                 {p.error && (
                   <small className={p.status === 'failed' ? 'ocr-page-error' : ''}>{p.error}</small>
                 )}

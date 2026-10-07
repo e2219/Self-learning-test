@@ -249,3 +249,37 @@ def test_optional_outer_code_fence_does_not_change_latex(fence):
     assert ocr.parse_transcription(wrapped).text == MATH_PAGE
     with pytest.raises(ocr.OCRError, match='OCR_TEXT_BOUNDARY'):
         ocr.parse_transcription(fence + '\n' + MATH_PAGE + '\n```')
+
+
+def test_proxy_dependency_failure_happens_before_request_and_is_clear(client, setup, monkeypatch, caplog):
+    def missing(**kwargs):
+        raise ImportError('Using SOCKS proxy but socksio missing; PRIVATE-CREDENTIAL')
+    monkeypatch.setattr(ocr.httpx, 'AsyncClient', missing)
+    doc_id = setup[1]['id']
+    job_id = client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1, 'force': True}).json()['id']
+    job = client.get(f'/api/ocr/{job_id}').json()
+    item = job['pages'][0]
+    assert job['tokens'] == 0 and item['stage'] == 'client_setup' and item['http_status'] is None
+    assert 'DEEPSEEK_PROXY_DEPENDENCY' in item['error'] and '尚未发出' in item['error']
+    assert 'PRIVATE-CREDENTIAL' not in str(job) + caplog.text
+
+
+def test_http_response_stage_survives_failed_decode(client, setup, monkeypatch):
+    original = httpx.AsyncClient
+    monkeypatch.setattr(ocr.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(lambda _: httpx.Response(401, text='PRIVATE')), **kw))
+    doc_id = setup[1]['id']
+    job_id = client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1, 'force': True}).json()['id']
+    item = client.get(f'/api/ocr/{job_id}').json()['pages'][0]
+    assert item['stage'] == 'response_received' and item['http_status'] == 401
+
+
+def test_unexpected_error_reports_type_stage_without_raw_message(client, setup, monkeypatch, caplog):
+    async def fail(image):
+        raise RuntimeError('PRIVATE-API-KEY-IN-ERROR')
+    monkeypatch.setattr(ocr, 'recognize_page', fail)
+    doc_id = setup[1]['id']
+    job_id = client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1, 'force': True}).json()['id']
+    job = client.get(f'/api/ocr/{job_id}').json()
+    assert 'OCR_INTERNAL:RuntimeError' in job['pages'][0]['error']
+    assert 'PRIVATE-API-KEY-IN-ERROR' not in str(job) + caplog.text
+    assert 'RuntimeError' in caplog.text and 'stage=' in caplog.text

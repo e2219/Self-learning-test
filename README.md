@@ -70,6 +70,16 @@ macOS/Linux 若 `python` 不存在，使用 `python3 start.py`。Windows 可以�
 
 如果旧任务提示「识别结果格式异常」，先停止服务，执行 `git pull --ff-only` 和 `python start.py` 更新重启，再点击原任务的 **重试未完成页**，不必重新上传教材。新版本直接接收 Markdown／LaTeX，避免将公式嵌入 JSON 时的反斜杠转义问题；空响应、内容截断、接口结构异常会分别给出诊断码。诊断日志不包含教材正文或密钥。
 
+### 开启代理时识别失败／显示 0 tokens
+
+项目通过后端调用真实 DeepSeek API。若终端启用了 SOCKS5 代理，旧依赖 `httpx` 缺少 SOCKS 支持，会在请求发出前触发 `ImportError`，并被旧版显示为通用失败。现已改为 `httpx[socks]`，OCR 与出题共用代理客户端；不会自动绕过代理或关闭证书校验。
+
+更新时先关闭服务，运行 `git pull --ff-only`、`python start.py`，启动器会安装新增依赖。若手动管理环境，需要在**实际运行服务的 Python 环境**中安装 `requirements.txt`。
+
+在「应用设置」点击 **检查 DeepSeek 连接**，会使用已保存密钥读取 `/models`，不发送教材、不调用生成接口。连接成功不代表图片识别内容一定正确。失败时会明确区分缺少代理依赖、代理地址配置无效、网络／证书错误和 HTTP 错误。支持标准 `http://`、`https://`、`socks5://`、`socks5h://` 代理地址，非标准 `socks://` 会提示修改。
+
+OCR 任务逐页显示调用阶段及已收到的 HTTP 状态。**0 tokens 仅表示尚未记录到用量**；客户端初始化失败说明请求尚未开始，进入请求步骤但没有响应则不能判断服务商是否收到。旧任务没有阶段记录，需重试后查看。其他内部异常会显示异常类型，终端输出 `OCR diagnostic ...` 安全诊断行，不包含密钥、代理账号密码或教材原文。
+
 ## 手机连接
 
 电脑需要保持开机，应用终端保持运行。手机与电脑须能互相访问：
@@ -135,7 +145,7 @@ npm run test:e2e
 
 仓库提供 [GitHub Actions 工作流模板](docs/ci-workflow.example.yml)，可在推送和 PR 时执行后端测试、前端构建和浏览器端到端测试，并保存截图及测试 PDF。**当前尚未启用自动 CI**：开发环境的 GitHub 令牌缺少 `workflow` 权限，GitHub 拒绝上传 `.github/workflows/ci.yml`。使用具有该权限的凭据，或在 GitHub 网页中将模板保存到该路径，即可启用。
 
-当前版本已完成 60 项后端测试；2 条浏览器完整流程此前通过，OCR 修复后该流程再次通过，并完成真实 DeepSeek 图片接口测试；此前也已完成 512 MB 合成 PDF 上传验证；第一版另有 1 次真实 DeepSeek 小题调用记录，详见 [核验记录](docs/VERIFICATION.md)。
+当前版本已完成 73 项后端测试；2 条浏览器完整流程此前通过，OCR 修复后该流程再次通过，并完成真实 DeepSeek 图片接口测试；此前也已完成 512 MB 合成 PDF 上传验证；第一版另有 1 次真实 DeepSeek 小题调用记录，详见 [核验记录](docs/VERIFICATION.md)。
 
 需要复现大文件上传验证时，在项目根目录执行 `.venv/bin/python scripts/verify_large_upload.py`。该脚本会生成 512 MB 合成 PDF，在独立临时数据目录和随机本机端口验证上传、保存与提取，然后自动清理，不接触个人学习记录、不调用 AI。合成文件只有 1 页内容，不能用来预测真实复杂教材的解析性能。
 

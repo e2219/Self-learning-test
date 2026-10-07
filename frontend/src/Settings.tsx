@@ -9,6 +9,7 @@ export function SettingsPage() {
   const [key, setKey] = useState(''),
     [model, setModel] = useState(''),
     [busy, setBusy] = useState(false),
+    [checking, setChecking] = useState(false),
     [message, setMessage] = useState(''),
     [error, setError] = useState('');
   return (
@@ -39,6 +40,34 @@ export function SettingsPage() {
               {settings.data?.has_key ? '已保存 API Key' : '尚未配置 API Key'}
               {settings.data?.has_key && <Check size={16} />}
             </div>
+            <button
+              className="button secondary"
+              type="button"
+              disabled={busy || checking || !settings.data?.has_key || !!key}
+              onClick={async () => {
+                setChecking(true);
+                setError('');
+                setMessage('');
+                try {
+                  const result = await api<{ message: string; ocr_model_available: boolean }>(
+                    '/settings/test-connection',
+                    json('POST'),
+                  );
+                  if (result.ocr_model_available) setMessage(result.message);
+                  else setError(result.message);
+                } catch (err) {
+                  setError((err as Error).message);
+                } finally {
+                  setChecking(false);
+                }
+              }}
+            >
+              {checking ? '正在检查连接…' : '检查 DeepSeek 连接'}
+            </button>
+            <p className="field-help">
+              使用已保存的密钥检查网络和模型列表，不上传教材、不消耗生成
+              tokens。修改密钥后请先保存。
+            </p>
             <form
               onSubmit={async (e) => {
                 e.preventDefault();

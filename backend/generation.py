@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 
 import httpx
 
-from . import db
+from . import db, deepseek
 from .models import ExamInput, GeneratedQuestion
 from .security import api_key
 
@@ -109,7 +109,7 @@ sources 指向知识依据，不应声称新编题是教材原题。不得在题
         "difficulty": config["difficulty"], "focus": config.get("focus", "")},
         "avoid_similar_stems": previous[-30:], "reference_material": references}
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=15), follow_redirects=False) as client:
+        async with deepseek.create_client(timeout=httpx.Timeout(180, connect=15), follow_redirects=False) as client:
             response = await client.post("https://api.deepseek.com/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={"model": db.setting("model", "deepseek-chat"),
@@ -130,6 +130,8 @@ sources 指向知识依据，不应声称新编题是教材原题。不得在题
         return generated, int(result.get("usage", {}).get("total_tokens", 0))
     except GenerationError:
         raise
+    except deepseek.ClientSetupError as exc:
+        raise GenerationError(str(exc)) from exc
     except httpx.TimeoutException as exc:
         raise GenerationError("DeepSeek 响应超时，已保存其他题目，可稍后重试。") from exc
     except httpx.HTTPError as exc:

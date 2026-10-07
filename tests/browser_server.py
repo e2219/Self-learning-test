@@ -47,3 +47,13 @@ async def mock_ocr(image):
     })
 
 ocr.recognize_page = mock_ocr
+
+
+# Explicit test-only connection check; never use the real account from E2E.
+from backend import deepseek  # noqa: E402
+
+async def mock_connection(model):
+    return {"connected": True, "ocr_model_available": True,
+            "message": "DeepSeek 连接正常（HTTP 200），已确认可用 OCR 模型 deepseek-flash。（测试模拟响应）"}
+
+deepseek.check_connection = mock_connection
