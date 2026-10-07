@@ -410,13 +410,13 @@ def edit_question(question_id: str, payload: QuestionEdit):
         doc = required("documents", scope["document_id"])
         refs.extend({"document_id": doc["id"], "page": n, "name": doc["name"]} for n in range(scope["start"], scope["end"]+1))
     try:
-        validate_content(payload.model_dump(), question["type"], refs, [])
+        checked = validate_content(payload.model_dump(), question["type"], refs, [])
     except GenerationError as exc:
         raise HTTPException(422, str(exc)) from exc
     names = {(r["document_id"], r["page"]): r["name"] for r in refs}
     sources = [{**s.model_dump(), "name": names[(s.document_id, s.page)]} for s in payload.sources]
-    db.execute("""UPDATE questions SET stem=?,options=?,answer=?,explanation=?,rubric=?,knowledge=?,sources=?,points=?,status='ready',error='',self_score=NULL,is_wrong=0 WHERE id=?""",
-        (payload.stem, db.dump(payload.options), payload.answer, payload.explanation, db.dump(payload.rubric), payload.knowledge, db.dump(sources), payload.points, question_id))
+    db.execute("""UPDATE questions SET stem=?,options=?,answer=?,explanation=?,rubric=?,knowledge=?,sources=?,blanks=?,review='{}',points=?,status='ready',error='',self_score=NULL,is_wrong=0 WHERE id=?""",
+        (payload.stem, db.dump(payload.options), checked.answer, payload.explanation, db.dump(payload.rubric), payload.knowledge, db.dump(sources), db.dump([b.model_dump() for b in checked.blanks]), payload.points, question_id))
     refresh_exam(question["exam_id"])
     return db.question(required("questions", question_id))
 

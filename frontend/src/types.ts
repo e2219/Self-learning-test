@@ -34,6 +34,8 @@ export type Question = {
   points: number;
   status: string;
   stem: string;
+  blanks?: { answer: string; alternatives: string[] }[];
+  review?: { status?: string };
   options: string[];
   answer: string;
   explanation: string;
@@ -59,6 +61,7 @@ export type ExamConfig = {
   difficulty: string;
   focus: string;
   duration: number;
+  style?: string;
 };
 export type Exam = {
   id: string;

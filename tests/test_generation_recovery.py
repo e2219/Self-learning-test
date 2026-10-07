@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from backend import db, generation
+from tests.review_fixtures import review_response
 from tests.test_api import client, setup, valid_payload, exam_config  # noqa: F401
 
 REFS = [{'document_id': 'doc', 'page': 1}]
@@ -21,7 +22,7 @@ def result(payload, usage=100, finish='stop'):
 
 def adapter(monkeypatch, handler):
     original = httpx.AsyncClient
-    monkeypatch.setattr(generation.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(generation.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(lambda req: review_response(req) or handler(req)), **kw))
 
 
 def test_same_generic_choice_stem_different_options_is_not_duplicate():
@@ -39,21 +40,21 @@ def test_reordered_options_and_changed_answer_still_duplicate():
 
 
 @pytest.mark.parametrize('new_stem', [
-    '设随机变量 X 取值满足 $X>1$，则这个条件的补事件为____。',
-    '设随机变量 X 取值满足 $X<2$，则这个条件的补事件为____。',
-    '设随机变量 X 取值不满足 $X<1$，则这个条件的补事件为____。',
+    '设随机变量 X 取值满足 $X>1$，则这个条件的补事件为[[blank:1]]。',
+    '设随机变量 X 取值满足 $X<2$，则这个条件的补事件为[[blank:1]]。',
+    '设随机变量 X 取值不满足 $X<1$，则这个条件的补事件为[[blank:1]]。',
 ])
 def test_similar_fill_stems_with_different_math_or_negation_are_kept(new_stem):
     old = valid_payload()
-    old.update(options=[], stem='设随机变量 X 取值满足 $X<1$，则这个条件的补事件为____。')
+    old.update(options=[], blanks=[{"answer": "补事件", "alternatives": []}], stem='设随机变量 X 取值满足 $X<1$，则这个条件的补事件为[[blank:1]]。')
     q = {**old, 'stem': new_stem}
     assert generation.validate_content(q, 'fill', REFS, previous(old, 'fill')).stem == new_stem
 
 
 def test_identical_fill_stems_still_rejected():
     old = valid_payload()
-    old.update(options=[], stem='写出随机事件的补事件定义：____。')
-    q = {**old, 'stem': '写出随机事件的补事件定义：____。\n', 'answer': '另一份答案不能使题干成为新题'}
+    old.update(options=[], blanks=[{"answer": "补事件", "alternatives": []}], stem='写出随机事件的补事件定义：[[blank:1]]。')
+    q = {**old, 'stem': '写出随机事件的补事件定义：[[blank:1]]。\n', 'answer': '另一份答案不能使题干成为新题'}
     with pytest.raises(generation.DuplicateQuestionError):
         generation.validate_content(q, 'fill', REFS, previous(old, 'fill'))
 

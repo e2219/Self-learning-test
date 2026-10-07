@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 QuestionType = Literal["choice", "true_false", "fill", "calculation", "proof"]
 
@@ -52,6 +52,7 @@ class ExamInput(BaseModel):
     difficulty: Literal["基础巩固", "综合应用", "挑战题"] = "基础巩固"
     focus: str = Field(default="", max_length=500)
     duration: int = Field(default=60, ge=5, le=240)
+    style: Literal["贴近原题", "适度变式", "情景应用"] = "适度变式"
 
     @model_validator(mode="after")
     def valid_counts(self):
@@ -67,7 +68,14 @@ class Citation(BaseModel):
     page: int = Field(ge=1)
 
 
+class BlankAnswer(BaseModel):
+    answer: str = Field(min_length=1, max_length=1000)
+    alternatives: list[str] = Field(default_factory=list, max_length=10)
+
+
 class GeneratedQuestion(BaseModel):
+    _review: dict = PrivateAttr(default_factory=dict)
+    blanks: list[BlankAnswer] = Field(default_factory=list, max_length=12)
     stem: str = Field(min_length=5, max_length=12000)
     options: list[str] = Field(default_factory=list, max_length=6)
     answer: str = Field(min_length=1, max_length=12000)

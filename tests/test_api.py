@@ -9,6 +9,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from backend import db, generation, limits, security
+from tests.review_fixtures import review_response
 from backend.main import app
 from backend.models import GeneratedQuestion
 
@@ -200,7 +201,7 @@ def test_real_provider_adapter_uses_structured_json(client, setup, monkeypatch):
         assert body["response_format"] == {"type": "json_object"}
         assert request.headers["authorization"] == "Bearer test-key-never-send"
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(payload)}, "finish_reason": "stop"}], "usage": {"total_tokens": 234}})
-    monkeypatch.setattr(generation.httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(generation.httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(lambda req: review_response(req) or handler(req)), **kw))
     question, usage = asyncio.run(generation.generate_one({"type": "choice", "points": 5}, {"difficulty": "基础巩固"}, [{"document_id": "doc", "page": 1}], []))
     assert question.answer == "A" and usage == 234
 

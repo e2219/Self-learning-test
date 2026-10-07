@@ -84,6 +84,10 @@ def init_db():
         """)
         if "ocr_done" not in {r["name"] for r in con.execute("PRAGMA table_info(pages)")}:
             con.execute("ALTER TABLE pages ADD COLUMN ocr_done INTEGER NOT NULL DEFAULT 0")
+        question_columns = {r["name"] for r in con.execute("PRAGMA table_info(questions)")}
+        for name, default in (("blanks", "[]"), ("review", "{}")):
+            if name not in question_columns:
+                con.execute(f"ALTER TABLE questions ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
         ocr_columns = {r["name"] for r in con.execute("PRAGMA table_info(ocr_job_pages)")}
         if "stage" not in ocr_columns:
             con.execute("ALTER TABLE ocr_job_pages ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
@@ -132,7 +136,7 @@ def decode(row, fields):
 
 
 def question(row):
-    return decode(row, ("options", "rubric", "sources"))
+    return decode(row, ("options", "rubric", "sources", "blanks", "review"))
 
 
 def dump(value):

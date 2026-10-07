@@ -135,6 +135,9 @@ function QuestionEditor({
 }) {
   const [form, setForm] = useState(question),
     [rubric, setRubric] = useState(question.rubric.join('\n')),
+    [blanks, setBlanks] = useState(
+      (question.blanks || []).map((b) => [b.answer, ...b.alternatives].join(' | ')).join('\n'),
+    ),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   return (
@@ -147,7 +150,20 @@ function QuestionEditor({
           try {
             await api(
               `/questions/${question.id}`,
-              json('PUT', { ...form, rubric: rubric.split('\n').filter((s) => s.trim()) }),
+              json('PUT', {
+                ...form,
+                blanks:
+                  question.type === 'fill'
+                    ? blanks
+                        .split('\n')
+                        .filter((s) => s.trim())
+                        .map((s) => {
+                          const [answer, ...alternatives] = s.split('|').map((v) => v.trim());
+                          return { answer, alternatives };
+                        })
+                    : [],
+                rubric: rubric.split('\n').filter((s) => s.trim()),
+              }),
             );
             saved();
             close();
@@ -236,6 +252,15 @@ function QuestionEditor({
             />
           )}
         </label>
+        {question.type === 'fill' && (
+          <label>
+            逐空答案（每行一空，用 | 分隔等价答案）
+            <textarea required value={blanks} onChange={(e) => setBlanks(e.target.value)} />
+            <small>
+              题干使用 [[blank:1]]、[[blank:2]] 连续编号；保存后按逐空答案生成参考答案。
+            </small>
+          </label>
+        )}
         <label>
           解析
           <textarea
@@ -430,12 +455,19 @@ export function QuestionCard({
         </Link>
       )}
       {q.error && <Notice tone="error">{q.error}</Notice>}
+      {complete && (
+        <small className="muted">
+          {q.review?.status === 'passed'
+            ? '已通过 AI 独立审题，仍建议人工核对'
+            : '此题尚无独立审题记录'}
+        </small>
+      )}
       {!complete && !q.stem ? (
         <div className="question-pending">
           {q.status === 'generating' ? (
             <>
               <Loading label="AI 正在出题与校验…" />
-              <p>遇到重复或格式问题会自动调整，每题最多尝试 3 次。</p>
+              <p>正在独立解题并核对解析；未通过时自动修订，每题最多尝试 3 次。</p>
             </>
           ) : (
             <>
@@ -450,7 +482,9 @@ export function QuestionCard({
         </div>
       ) : (
         <>
-          <MathText className="question-stem">{q.stem}</MathText>
+          <MathText className="question-stem">
+            {q.stem.replace(/\[\[blank:(\d+)\]\]/g, '____（$1）')}
+          </MathText>
           {q.options.length > 0 && (
             <div className="question-options">
               {q.options.map((option, i) => (
@@ -883,7 +917,7 @@ export function PrintPage() {
             <div className="print-question-heading">
               {i + 1}. {typeNames[q.type]}（{q.points} 分）
             </div>
-            <MathText>{q.stem}</MathText>
+            <MathText>{q.stem.replace(/\[\[blank:(\d+)\]\]/g, '____（$1）')}</MathText>
             {q.options.map((o, j) => (
               <div className="print-option" key={j}>
                 <span>{'ABCD'[j]}.</span>

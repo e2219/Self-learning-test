@@ -45,6 +45,7 @@ export function Generator() {
     [randomCount, setRandomCount] = useState(10),
     [difficulty, setDifficulty] = useState('基础巩固'),
     [focus, setFocus] = useState(''),
+    [style, setStyle] = useState('适度变式'),
     [duration, setDuration] = useState(60),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -91,6 +92,7 @@ export function Generator() {
       difficulty,
       focus,
       duration,
+      style,
     };
   }
   function updateRange(id: string, patch: Partial<SourceRange>) {
@@ -456,6 +458,17 @@ export function Generator() {
                   placeholder="例如：重点练习条件概率与事件独立性，注意区分两者的概念。"
                 />
               </label>
+              <label>
+                出题方式
+                <select value={style} onChange={(e) => setStyle(e.target.value)}>
+                  <option>贴近原题</option>
+                  <option>适度变式</option>
+                  <option>情景应用</option>
+                </select>
+              </label>
+              <p className="field-help">
+                每题会独立审题并核对答案解析，会增加 API 用量。AI 审题不能替代人工核对。
+              </p>
               <label className="duration-field">
                 建议用时（分钟）
                 <input
