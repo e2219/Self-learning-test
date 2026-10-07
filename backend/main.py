@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import json
 import os
@@ -10,11 +9,12 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
-from . import db, security
+from . import db, limits, security
 from .generation import GenerationError, active_exams, plan_questions, retrieve, run_generation, validate_content
 from .models import CourseInput, ExamInput, LoginInput, PageInput, ProgressInput, QuestionEdit, SettingsInput
-from .pdf import PDFError, extract_pdf
+from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
 
 
 @asynccontextmanager
@@ -99,7 +99,8 @@ def logout(request: Request, response: Response):
 @api.get("/settings")
 def settings():
     return {"has_key": bool(security.api_key()), "key_from_env": bool(os.environ.get("DEEPSEEK_API_KEY")),
-        "model": db.setting("model", "deepseek-chat")}
+        "model": db.setting("model", "deepseek-chat"),
+        "max_pdf_bytes": limits.MAX_PDF_BYTES, "max_pdf_pages": limits.MAX_PDF_PAGES}
 
 
 @api.put("/settings")
@@ -162,28 +163,30 @@ async def upload_document(course_id: str, file: UploadFile = File(...), kind: st
     required("courses", course_id)
     if kind not in ("教材", "习题集", "往年试卷", "个人笔记"):
         raise HTTPException(422, "不支持的资料类型。")
-    data = await file.read(30 * 1024 * 1024 + 1)
-    await file.close()
-    if len(data) > 30 * 1024 * 1024:
-        raise HTTPException(413, "PDF 不能超过 30 MB。")
-    try:
-        pages, outline, warnings = await asyncio.to_thread(extract_pdf, data)
-    except PDFError as exc:
-        raise HTTPException(422, str(exc)) from exc
     document_id = uuid.uuid4().hex
     name = (file.filename or "教材.pdf").replace("\\", "/").split("/")[-1][:180]
     path = db.DATA_DIR / "uploads" / f"{document_id}.pdf"
+    committed = False
     try:
-        path.write_bytes(data)
-        path.chmod(0o600)
+        if file.size is not None and file.size > limits.MAX_PDF_BYTES:
+            raise HTTPException(413, f"PDF 不能超过 {limits.MAX_PDF_MB} MB。")
+        pages, outline, warnings = await run_in_threadpool(save_and_extract_pdf, file.file, path)
+        # A long-running upload must not recreate a course deleted in another tab.
+        required("courses", course_id)
         with db.connection() as con:
             con.execute("INSERT INTO documents(id,course_id,name,kind,page_count,outline,warnings) VALUES (?,?,?,?,?,?,?)",
                 (document_id, course_id, name, kind, len(pages), db.dump(outline), db.dump(warnings)))
             con.executemany("INSERT INTO pages(document_id,number,text,warning) VALUES (?,?,?,?)",
                 [(document_id, p["number"], p["text"], p["warning"]) for p in pages])
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
+        committed = True
+    except PDFSizeError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    except PDFError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    finally:
+        await file.close()
+        if not committed:
+            path.unlink(missing_ok=True)
     return db.decode(required("documents", document_id), ("outline", "warnings"))
 
 

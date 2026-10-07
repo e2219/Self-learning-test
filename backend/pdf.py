@@ -1,22 +1,57 @@
-import io
+import os
 import re
+from pathlib import Path
+from typing import BinaryIO
 
 from pypdf import PdfReader
+
+from . import limits
 
 
 class PDFError(ValueError):
     pass
 
 
-def extract_pdf(data: bytes):
-    if not data.lstrip().startswith(b"%PDF-"):
-        raise PDFError("文件不是有效的 PDF。")
+class PDFSizeError(PDFError):
+    pass
+
+
+def save_and_extract_pdf(source: BinaryIO, destination: Path):
+    """Copy the spooled multipart upload in bounded chunks, then parse from disk.
+
+    Passing a path to PdfReader would load the entire PDF into a BytesIO. An
+    already-open file lets it seek instead, particularly useful for image-heavy
+    textbooks. Individual decoded PDF objects can still consume memory.
+    """
+    source.seek(0)
+    size = 0
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        reader = PdfReader(io.BytesIO(data))
+        with os.fdopen(fd, "wb") as output:
+            while chunk := source.read(limits.UPLOAD_CHUNK_BYTES):
+                size += len(chunk)
+                if size > limits.MAX_PDF_BYTES:
+                    raise PDFSizeError(f"PDF 不能超过 {limits.MAX_PDF_MB} MB。")
+                output.write(chunk)
+        with destination.open("rb") as stream:
+            return extract_pdf(stream)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def extract_pdf(stream: BinaryIO):
+    stream.seek(0)
+    if not stream.read(1024).lstrip().startswith(b"%PDF-"):
+        raise PDFError("文件不是有效的 PDF。")
+    stream.seek(0)
+    reader = None
+    try:
+        reader = PdfReader(stream)
         if reader.is_encrypted and not reader.decrypt(""):
             raise PDFError("暂不支持带密码的 PDF，请先解密。")
-        if not 1 <= len(reader.pages) <= 800:
-            raise PDFError("每份 PDF 应包含 1 至 800 页。")
+        if not 1 <= len(reader.pages) <= limits.MAX_PDF_PAGES:
+            raise PDFError(f"每份 PDF 应包含 1 至 {limits.MAX_PDF_PAGES} 页。")
         pages, warnings = [], []
         for index, page in enumerate(reader.pages, 1):
             # Normal text extraction preserves reading order better than layout
@@ -57,3 +92,6 @@ def extract_pdf(data: bytes):
         raise
     except Exception as exc:
         raise PDFError("无法读取 PDF，文件可能损坏或格式不受支持。") from exc
+    finally:
+        if reader is not None:
+            reader.close()

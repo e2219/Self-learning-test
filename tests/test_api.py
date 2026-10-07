@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from backend import db, generation, security
+from backend import db, generation, limits, security
 from backend.main import app
 from backend.models import GeneratedQuestion
 
@@ -230,3 +230,35 @@ def test_restart_practice_preserves_wrong_mark_and_history(client, setup, monkey
     assert result["self_score"] is None and result["user_answer"] == ""
     assert result["is_wrong"] == 1
     assert len(client.get(f"/api/questions/{q['id']}/attempts").json()) == 1
+
+
+def test_upload_above_old_30mb_limit(client, setup):
+    course, _ = setup
+    original = sample_pdf()
+    # A legal PDF comment before startxref pads the file without shifting object
+    # offsets. Test files contain no private textbook content.
+    split = original.rindex(b"startxref")
+    data = original[:split] + b"%" + b"0" * (31 * 1024 * 1024) + b"\n" + original[split:]
+    response = client.post(f"/api/courses/{course['id']}/documents", files={"file": ("large.pdf", data)})
+    assert response.status_code == 201
+    doc = response.json()
+    assert (db.DATA_DIR / "uploads" / f"{doc['id']}.pdf").stat().st_size == len(data)
+    assert "Probability" in client.get(f"/api/documents/{doc['id']}/pages/1").json()["text"]
+    settings = client.get("/api/settings").json()
+    assert settings["max_pdf_bytes"] == 1024 * 1024 * 1024
+    assert settings["max_pdf_pages"] == 2000
+
+
+def test_upload_limit_boundary_and_cleanup(client, setup, monkeypatch):
+    course, _ = setup
+    data = sample_pdf()
+    before = set((db.DATA_DIR / "uploads").iterdir())
+    monkeypatch.setattr(limits, "MAX_PDF_BYTES", len(data) - 1)
+    response = client.post(f"/api/courses/{course['id']}/documents", files={"file": ("too-big.pdf", data)})
+    assert response.status_code == 413
+    assert set((db.DATA_DIR / "uploads").iterdir()) == before
+    monkeypatch.setattr(limits, "MAX_PDF_BYTES", len(data))
+    assert client.post(f"/api/courses/{course['id']}/documents", files={"file": ("at-limit.pdf", data)}).status_code == 201
+    before = set((db.DATA_DIR / "uploads").iterdir())
+    assert client.post(f"/api/courses/{course['id']}/documents", files={"file": ("broken.pdf", b"not PDF")}).status_code == 422
+    assert set((db.DATA_DIR / "uploads").iterdir()) == before

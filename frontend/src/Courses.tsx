@@ -19,8 +19,8 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { api, date, json, useRemote } from './api';
-import type { Course, Document, Exam, Page } from './types';
+import { api, date, json, upload as uploadFile, useRemote } from './api';
+import type { Course, Document, Exam, Page, Settings } from './types';
 import { Empty, Loading, MathText, Modal, Notice, PageHeading, SectionHeading, Status } from './ui';
 
 function CourseCard({ course, index }: { course: Course; index: number }) {
@@ -470,26 +470,32 @@ export function CoursePage() {
     navigate = useNavigate();
   const courses = useRemote<Course[]>('/courses'),
     docs = useRemote<Document[]>(`/courses/${courseId}/documents`),
-    exams = useRemote<Exam[]>(`/exams?course_id=${courseId}`);
+    exams = useRemote<Exam[]>(`/exams?course_id=${courseId}`),
+    settings = useRemote<Settings>('/settings');
   const course = courses.data?.find((c) => c.id === courseId);
   const [uploading, setUploading] = useState(false),
+    [uploadProgress, setUploadProgress] = useState(0),
     [message, setMessage] = useState(''),
     [kind, setKind] = useState('教材'),
     [preview, setPreview] = useState<Document | null>(null),
     [manage, setManage] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const maxBytes = settings.data?.max_pdf_bytes ?? 1024 * 1024 * 1024;
+  const maxPages = settings.data?.max_pdf_pages ?? 2000;
+  const sizeLimit = `${maxBytes / (1024 * 1024)} MB`;
   async function upload(file: File) {
-    if (file.size > 30 * 1024 * 1024) {
-      setMessage('PDF 不能超过 30 MB。');
+    if (file.size > maxBytes) {
+      setMessage(`PDF 不能超过 ${sizeLimit}。`);
       return;
     }
     setUploading(true);
+    setUploadProgress(0);
     setMessage('');
     const body = new FormData();
     body.append('file', file);
     body.append('kind', kind);
     try {
-      await api(`/courses/${courseId}/documents`, { method: 'POST', body });
+      await uploadFile(`/courses/${courseId}/documents`, body, setUploadProgress);
       await docs.reload();
       await courses.reload();
     } catch (err) {
@@ -565,8 +571,31 @@ export function CoursePage() {
             <div className="upload-icon">
               <Upload size={24} />
             </div>
-            <h3>{uploading ? '正在解析教材…' : '把教材放进你的学习空间'}</h3>
-            <p>拖入 PDF，或点击选择文件。每份最多 30 MB / 800 页。</p>
+            <h3>
+              {uploading
+                ? uploadProgress < 100
+                  ? `正在上传教材 · ${uploadProgress}%`
+                  : '正在保存并解析教材…'
+                : '把教材放进你的学习空间'}
+            </h3>
+            <p>
+              拖入 PDF，或点击选择文件。每份最多 {sizeLimit} / {maxPages} 页。
+            </p>
+            {uploading && (
+              <div role="status">
+                <progress
+                  className="upload-progress"
+                  aria-label="教材上传进度"
+                  value={uploadProgress}
+                  max={100}
+                />
+                <p>
+                  {uploadProgress < 100
+                    ? '正在传输文件，请保持页面打开。'
+                    : '文件已发送，正在处理内容。大型教材可能需要数分钟，请保持页面打开。'}
+                </p>
+              </div>
+            )}
             <div className="upload-controls">
               <select
                 aria-label="资料类型"

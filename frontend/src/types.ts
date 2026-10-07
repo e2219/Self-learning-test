@@ -73,4 +73,10 @@ export type Exam = {
   config: ExamConfig;
   questions: Question[];
 };
-export type Settings = { has_key: boolean; key_from_env: boolean; model: string };
+export type Settings = {
+  has_key: boolean;
+  key_from_env: boolean;
+  model: string;
+  max_pdf_bytes: number;
+  max_pdf_pages: number;
+};
