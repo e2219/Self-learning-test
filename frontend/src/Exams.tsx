@@ -433,7 +433,10 @@ export function QuestionCard({
       {!complete && !q.stem ? (
         <div className="question-pending">
           {q.status === 'generating' ? (
-            <Loading label="AI 正在出题与推导解析…" />
+            <>
+              <Loading label="AI 正在出题与校验…" />
+              <p>遇到重复或格式问题会自动调整，每题最多尝试 3 次。</p>
+            </>
           ) : (
             <>
               <Status status={q.status} />
