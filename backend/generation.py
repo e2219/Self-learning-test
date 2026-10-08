@@ -238,7 +238,7 @@ async def generate_one(question, config, references, previous):
 只能依据所提供片段中的知识出题，不能假造资料页码。若片段不足以支持指定题型，返回 {"error":"资料不足以支持此题型"}。
 数学符号使用 LaTeX：行内 $...$、独立公式 $$...$$。JSON 字符串内所有 LaTeX 反斜杠必须加倍转义。
 例如 JSON 中应写 "answer":"$\\frac{1}{2}$"，不能将 \f、\t、\b 当成公式的 JSON 转义。
-返回一个 JSON 对象，字段：stem（题干字符串）、options（选择题四个选项字符串组成的数组，不含 A/B 等前缀；其他题型为空数组）、answer（字符串）、explanation（逐步解答字符串）、rubric（评分要点字符串数组）、knowledge（知识点字符串）、sources（数组，每项 document_id 和整数 page）。
+返回一个 JSON 对象，字段：stem（题干字符串）、options（选择题四个选项字符串组成的数组，不含 A/B 等前缀；其他题型为空数组）、answer（字符串）、explanation（逐步解答字符串）、knowledge（知识点字符串）、sources（数组，每项 document_id 和整数 page）。
 单项选择题必须只有一个正确选项，answer 仅为 A/B/C/D。返回前逐项计算或推理四个选项的真假，若有多个正确选项，必须修改选项后重新检查，不能只改答案字母。判断题 answer 仅为 正确/错误。
 填空题 stem 必须包含 [[blank:1]] 等连续编号空位，blanks 为逐空对象数组，每项包含 answer 和 alternatives（等价答案数组）。填空题仅要求填写术语、数值或表达式，不得变成解释、论述或证明题。其他题型 blanks 为空数组。
 贴近原题不得扩展新情景；适度变式允许改变设问；情景应用允许假设情景但必须明确假设，生物化学的实验事实、机制和数值关系必须有资料依据，不能虚构。
@@ -247,12 +247,14 @@ async def generate_one(question, config, references, previous):
 planned_target 若存在，是用户确认的本题考点与设问目标，必须遵循，优先于随机出题角度。只考查该目标，不得附加未分配的其他知识点或填空；单选正确选项必须直接回答该目标，不能仅让一个干扰项提及该目标。
 target_passage 是从完整参考资料中选出的本题优先考查片段，应以它为出题重点，并用其余资料提供必要条件。出题角度是参考，不能强行超出教材，也不能改变指定题型、难度。收到 validation_feedback 时必须针对具体错误修改，不能重复提交失败题目。
 sources 指向知识依据，不应声称新编题是教材原题。不得在题干中提前泄露答案。
+不要输出 rubric 或评分要点。客观题解析简明说明关键依据，不重复题干、答案和整段教材；计算和证明题保留必要推导，避免重复叙述。answer 给出结论，推导集中在 explanation。
 只返回 JSON，不使用代码块。"""
     example = {"stem": "完整且自洽的题干" if question["type"] != "fill" else "需要填写的术语是 [[blank:1]]。", "blanks": [{"answer": "术语", "alternatives": []}] if question["type"] == "fill" else [], "options": ["选项一", "选项二", "选项三", "选项四"] if question["type"] == "choice" else [],
         "answer": "A" if question["type"] == "choice" else "正确" if question["type"] == "true_false" else "完整参考答案",
-        "explanation": "完整推导过程", "rubric": ["评分要点及分值"], "knowledge": "具体知识点",
+        "explanation": "必要的解题依据或推导步骤", "knowledge": "具体知识点",
         "sources": [{"document_id": references[0]["document_id"], "page": references[0]["page"]}] if references else []}
     schema = GeneratedQuestion.model_json_schema()
+    schema["properties"].pop("rubric", None)
     if question["type"] == "choice":
         schema["properties"]["options"].update(minItems=4, maxItems=4)
         schema["properties"]["answer"]["enum"] = list("ABCD")

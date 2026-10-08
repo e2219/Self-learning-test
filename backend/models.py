@@ -91,7 +91,7 @@ class GeneratedQuestion(BaseModel):
     options: list[str] = Field(default_factory=list, max_length=6)
     answer: str = Field(min_length=1, max_length=12000)
     explanation: str = Field(min_length=1, max_length=20000)
-    rubric: list[str] = Field(min_length=1, max_length=12)
+    rubric: list[str] = Field(default_factory=list, max_length=12)
     knowledge: str = Field(min_length=1, max_length=300)
     sources: list[Citation] = Field(min_length=1, max_length=12)
 

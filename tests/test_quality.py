@@ -68,11 +68,16 @@ def test_review_failure_repairs_and_counts_all_requests(client, setup, monkeypat
             payload = blind()
             if len(calls) == 2: payload['option_judgments'][1]['verdict'] = 'correct'
         elif stage == 'consistency_review':
+            assert 'rubric' not in task['question']
             payload = dict(answer_matches=True, explanation_consistent=True, evidence_supported=True, issues=[])
         else:
+            assert 'rubric' not in task['output_schema']['properties']
+            assert 'rubric' not in task['output_example_structure_only']
             payload = valid_payload()
+            payload.pop('rubric')
         return httpx.Response(200, json=result(payload))
     monkeypatch.setattr(generation.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
     q, usage = asyncio.run(generation.generate_one({'type': 'choice', 'points': 5}, {'difficulty': '基础巩固'}, [{'document_id': 'doc', 'page': 1}], []))
     assert usage == 500 and q._review['status'] == 'passed'
+    assert q.rubric == []
     assert calls[2]['validation_feedback']['code'] == 'QUESTION_REVIEW'

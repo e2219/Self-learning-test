@@ -85,7 +85,7 @@ async def review_question(call, q, kind, references, previous, course):
         raise ReviewError('；'.join(issues + reasons)[:4000])
     # Separate request: the first independent solution never saw the proposed answer.
     task = {'stage': 'consistency_review', 'course': course, 'type': kind,
-            'question': q.model_dump(), 'independent_solution': blind.model_dump(),
+            'question': q.model_dump(exclude={'rubric'}), 'independent_solution': blind.model_dump(),
             'reference_material': references,
             'instructions': '核对每个空位答案及等价答案、参考答案、解析和资料是否一致。不能因前一步通过而默认本步通过。解析称另一个选项也正确、单位或数据矛盾、无依据的生化实验事实一律拒绝。',
             'output_schema': ConsistencyReview.model_json_schema()}

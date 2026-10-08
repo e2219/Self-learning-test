@@ -142,7 +142,6 @@ function QuestionEditor({
   saved: () => void;
 }) {
   const [form, setForm] = useState(question),
-    [rubric, setRubric] = useState(question.rubric.join('\n')),
     [blanks, setBlanks] = useState(
       (question.blanks || []).map((b) => [b.answer, ...b.alternatives].join(' | ')).join('\n'),
     ),
@@ -170,7 +169,7 @@ function QuestionEditor({
                           return { answer, alternatives };
                         })
                     : [],
-                rubric: rubric.split('\n').filter((s) => s.trim()),
+                rubric: question.rubric,
               }),
             );
             saved();
@@ -277,10 +276,6 @@ function QuestionEditor({
             value={form.explanation}
             onChange={(e) => setForm({ ...form, explanation: e.target.value })}
           />
-        </label>
-        <label>
-          评分要点（每行一条）
-          <textarea rows={3} required value={rubric} onChange={(e) => setRubric(e.target.value)} />
         </label>
         {error && <Notice tone="error">{error}</Notice>}
         <div className="modal-actions">
@@ -648,14 +643,6 @@ export function QuestionCard({
                   <MathText>{q.answer}</MathText>
                   <div className="solution-label">解题思路</div>
                   <MathText>{q.explanation}</MathText>
-                  <div className="solution-label">评分要点</div>
-                  <ul>
-                    {q.rubric.map((r, i) => (
-                      <li key={i}>
-                        <MathText>{r}</MathText>
-                      </li>
-                    ))}
-                  </ul>
                   <div className="sources">
                     <BookOpen size={14} />
                     <div>
@@ -965,7 +952,7 @@ export function PrintPage() {
           <ChevronLeft size={16} />
           返回试卷
         </Link>
-        <span>{answers ? '参考答案与评分要点' : '学生试卷 · 不包含答案'}</span>
+        <span>{answers ? '参考答案与解析' : '学生试卷 · 不包含答案'}</span>
         <button
           className="button primary"
           disabled={!questions.length}
@@ -1020,14 +1007,6 @@ export function PrintPage() {
                 <MathText>{q.answer}</MathText>
                 <strong>解析</strong>
                 <MathText>{q.explanation}</MathText>
-                <strong>评分要点</strong>
-                <ul>
-                  {q.rubric.map((r, j) => (
-                    <li key={j}>
-                      <MathText>{r}</MathText>
-                    </li>
-                  ))}
-                </ul>
                 <p className="print-citation">
                   知识依据：{q.sources.map((s) => `${s.name} 第 ${s.page} 页`).join('；')}（PDF
                   页码）
