@@ -108,3 +108,38 @@ def extract_pdf(stream: BinaryIO):
     finally:
         if reader is not None:
             reader.close()
+
+
+IMAGE_MAX_BYTES = 20 * 1024 * 1024
+IMAGE_MAX_PIXELS = 40_000_000
+
+
+def save_image_as_pdf(source: BinaryIO, destination: Path):
+    """Normalize an image into a single-page document, without sending it to any API."""
+    import io
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    source.seek(0)
+    data = source.read(IMAGE_MAX_BYTES + 1)
+    if len(data) > IMAGE_MAX_BYTES:
+        raise PDFSizeError("单张图片不能超过 20 MB。")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if image.format not in ('JPEG', 'PNG', 'WEBP') or getattr(image, 'n_frames', 1) != 1:
+                raise PDFError("支持静态 JPG、PNG、WebP 图片，不支持动画或多帧文件。")
+            if image.width * image.height > IMAGE_MAX_PIXELS:
+                raise PDFError("图片不能超过 4000 万像素，请缩小后上传。")
+            image.load()
+            oriented = ImageOps.exif_transpose(image)
+            try:
+                with oriented.convert('RGBA') as rgba:
+                    with Image.new('RGB', rgba.size, 'white') as rgb:
+                        rgb.paste(rgba, mask=rgba.getchannel('A'))
+                        with destination.open('xb') as out:
+                            rgb.save(out, format='PDF', resolution=144, quality=95)
+                destination.chmod(0o600)
+            finally:
+                oriented.close()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+        destination.unlink(missing_ok=True)
+        raise PDFError(str(exc) if isinstance(exc, PDFError) else '图片无法解码，请使用有效的 JPG、PNG 或 WebP。') from exc
+    return ([{'number': 1, 'text': '', 'warning': '图片资料，请点击识别所选页读取文字与公式。'}], [], ['图片已作为单页资料导入，识别时才会调用 API。'])

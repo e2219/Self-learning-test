@@ -145,6 +145,7 @@ def test_worker_recovers_existing_failed_exam_without_replacing_ready_question(c
     adapter(monkeypatch, handler)
     config = exam_config(setup)
     config['rules'] = [{'type': 'choice', 'count': 2, 'points': 5}]
+    config['max_attempts'] = 3
     exam_id = client.post('/api/exams', json=config).json()['id']
     before = client.get(f'/api/exams/{exam_id}').json()
     assert before['status'] == 'partial' and before['tokens'] == 400

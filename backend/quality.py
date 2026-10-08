@@ -4,6 +4,7 @@ A review is model evidence, not a guarantee of subject-matter correctness.
 """
 import json
 from typing import Literal
+from . import usage
 
 from pydantic import BaseModel, Field, StrictBool, ValidationError
 
@@ -53,13 +54,13 @@ async def review_question(call, q, kind, references, previous, course):
               '发现资料表格数据矛盾、条件不充分、资料依据缺失要拒绝，不要替资料补造事实。'
               '如 course.expected_target 非空，必须核对主要设问及正确答案直接考查该目标，不能只在干扰项中提及目标、也不能添加其他考点的填空；无分配目标时 target_matches 为 true。'
               '重复指相同条件和实质设问，仅同一知识点而不同技能不算重复。'
-              '只返回符合 output_schema 的 JSON，所有判断必须给出依据。')
+              '只返回符合 output_schema 的 JSON，逐项理由只写关键依据，避免重复题干；通过时 issues 为空。')
     task = {'stage': 'blind_review', 'course': course, 'type': kind,
             'question': {'stem': q.stem, 'options': q.options},
             'reference_material': references, 'previous_questions': previous,
             'instructions': '先独立解题；单选逐项判断真假或不确定，按 A/B/C/D 顺序；其他题型 option_judgments 为空。',
-            'output_schema': BlindReview.model_json_schema()}
-    blind_result = await call([{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(task, ensure_ascii=False)}])
+            'output_schema': usage.compact_schema(BlindReview.model_json_schema())}
+    blind_result = await call([{'role': 'system', 'content': system}, {'role': 'user', 'content': usage.dumps(task)}])
     blind = parse_review(blind_result, BlindReview)
     issues = list(blind.issues)
     if not blind.target_matches:
@@ -88,8 +89,8 @@ async def review_question(call, q, kind, references, previous, course):
             'question': q.model_dump(exclude={'rubric'}), 'independent_solution': blind.model_dump(),
             'reference_material': references,
             'instructions': '核对每个空位答案及等价答案、参考答案、解析和资料是否一致。不能因前一步通过而默认本步通过。解析称另一个选项也正确、单位或数据矛盾、无依据的生化实验事实一律拒绝。',
-            'output_schema': ConsistencyReview.model_json_schema()}
-    audit_result = await call([{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(task, ensure_ascii=False)}])
+            'output_schema': usage.compact_schema(ConsistencyReview.model_json_schema())}
+    audit_result = await call([{'role': 'system', 'content': system}, {'role': 'user', 'content': usage.dumps(task)}])
     audit = parse_review(audit_result, ConsistencyReview)
     if not all((audit.answer_matches, audit.explanation_consistent, audit.evidence_supported)) or audit.issues:
         raise ReviewError('答案、解析或资料不一致：' + ('；'.join(audit.issues) or '独立核对未通过'))

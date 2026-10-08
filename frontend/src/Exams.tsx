@@ -1,3 +1,4 @@
+import { UsageBreakdown } from './Usage';
 import {
   SavedAnswerResult,
   supportsAutoScore,
@@ -643,6 +644,29 @@ export function QuestionCard({
                   <MathText>{q.answer}</MathText>
                   <div className="solution-label">解题思路</div>
                   <MathText>{q.explanation}</MathText>
+                  <button
+                    className="button ghost"
+                    disabled={busy || saving || !!q.review?.expanded_explanation}
+                    onClick={async () => {
+                      if (savingRef.current) return;
+                      savingRef.current = true;
+                      setSaving(true);
+                      setError('');
+                      try {
+                        await api(`/questions/${q.id}/explanation`, json('POST'));
+                        onChange();
+                      } catch (e) {
+                        setError((e as Error).message);
+                      } finally {
+                        savingRef.current = false;
+                        setSaving(false);
+                      }
+                    }}
+                  >
+                    {q.review?.expanded_explanation
+                      ? '已补充详解（后续复用）'
+                      : '补充详细解析（调用 API 并核验）'}
+                  </button>
                   <div className="sources">
                     <BookOpen size={14} />
                     <div>
@@ -913,6 +937,56 @@ export function ExamPage() {
           </div>
           <div className="exam-admin">
             <span>已记录模型用量：{data.tokens.toLocaleString()} tokens</span>
+            <UsageBreakdown rows={data.usage} />
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const fields = new FormData(e.currentTarget);
+                try {
+                  await api(
+                    `/exams/${examId}/budget`,
+                    json('PUT', {
+                      token_budget: Number(fields.get('budget')),
+                      max_attempts: Number(fields.get('attempts')),
+                    }),
+                  );
+                  await exam.reload();
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              }}
+            >
+              <label>
+                累计 token 预算阈值
+                <input
+                  name="budget"
+                  type="number"
+                  min={0}
+                  max={10000000}
+                  required
+                  defaultValue={data.config.token_budget || 0}
+                  disabled={generating || actionBusy}
+                />
+              </label>
+              <label>
+                每题最多尝试次数
+                <input
+                  name="attempts"
+                  type="number"
+                  min={1}
+                  max={3}
+                  required
+                  defaultValue={data.config.max_attempts ?? 3}
+                  disabled={generating || actionBusy}
+                />
+              </label>
+              <button className="button secondary" disabled={generating || actionBusy}>
+                保存用量设置
+              </button>
+              <p className="field-help">
+                预算 0 为不限；修改后点击继续 / 重试，已完成题目保留。规划、OCR 另计。
+              </p>
+            </form>
             <button
               className="text-link muted"
               disabled={generating || actionBusy}

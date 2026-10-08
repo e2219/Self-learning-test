@@ -47,7 +47,7 @@ export type Question = {
   status: string;
   stem: string;
   blanks?: { answer: string; alternatives: string[] }[];
-  review?: { status?: string };
+  review?: { status?: string; expanded_explanation?: boolean };
   options: string[];
   answer: string;
   explanation: string;
@@ -62,7 +62,12 @@ export type Question = {
   course_name?: string;
   exam_title?: string;
 };
-export type SourceRange = { document_id: string; start: number; end: number };
+export type SourceRange = {
+  role?: 'auto' | 'knowledge' | 'reference';
+  document_id: string;
+  start: number;
+  end: number;
+};
 export type ExamConfig = {
   course_id: string;
   title: string;
@@ -72,6 +77,11 @@ export type ExamConfig = {
   random_count: number;
   difficulty: string;
   focus: string;
+  instructions?: string;
+  max_attempts?: number;
+  token_budget?: number;
+  batch_generation?: boolean;
+  answer_detail?: 'concise' | 'full';
   duration: number;
   style?: string;
   submission_id?: string;
@@ -94,6 +104,7 @@ export type Exam = {
   config: ExamConfig;
   coverage?: { title: string; planned: number; completed: number }[];
   planning_tokens?: number;
+  usage?: import('./Usage').UsageRow[];
   questions: Question[];
 };
 export type Settings = {
@@ -108,6 +119,7 @@ export type Settings = {
 
 export type PlanSlot = { topic_id: string; type: QuestionType; points: number; objective: string };
 export type ExamPlan = {
+  usage?: import('./Usage').UsageRow[];
   config: ExamConfig;
   basis_config: ExamConfig;
   revision: number;

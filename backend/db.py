@@ -28,6 +28,12 @@ def init_db():
     with connection() as con:
         con.execute("PRAGMA journal_mode=WAL")
         con.executescript("""
+        CREATE TABLE IF NOT EXISTS usage_events (
+            id INTEGER PRIMARY KEY, owner_type TEXT NOT NULL, owner_id TEXT NOT NULL,
+            stage TEXT NOT NULL, attempt INTEGER NOT NULL, model TEXT NOT NULL,
+            input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, total_tokens INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_owner ON usage_events(owner_type,owner_id);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS courses (
@@ -108,7 +114,7 @@ def init_db():
             if name not in page_columns:
                 con.execute(f"ALTER TABLE pages ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
         question_columns = {r["name"] for r in con.execute("PRAGMA table_info(questions)")}
-        for name, default in (("blanks", "[]"), ("review", "{}")):
+        for name, default in (("blanks", "[]"), ("review", "{}"), ("candidate", "")):
             if name not in question_columns:
                 con.execute(f"ALTER TABLE questions ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
         plan_columns = {r["name"] for r in con.execute("PRAGMA table_info(exam_plans)")}
@@ -168,6 +174,7 @@ def decode(row, fields):
 
 
 def question(row):
+    if row is not None: row.pop('candidate', None)
     return decode(row, ("options", "rubric", "sources", "blanks", "review"))
 
 

@@ -11,10 +11,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check
+from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, usage, explanations
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
-from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput
-from .pdf import PDFError, PDFSizeError, save_and_extract_pdf, text_quality_issue
+from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput, BudgetInput
+from .pdf import PDFError, PDFSizeError, save_and_extract_pdf, text_quality_issue, save_image_as_pdf
 
 
 @asynccontextmanager
@@ -79,6 +79,7 @@ def exam_detail(exam_id):
     exam = db.decode(required("exams", exam_id), ("config",))
     exam["course_name"] = required("courses", exam["course_id"])["name"]
     exam["questions"] = [db.question(q) for q in db.rows("SELECT * FROM questions WHERE exam_id=? ORDER BY position", (exam_id,))]
+    exam["usage"] = usage.summary("exam", exam_id)
     exam["total_points"] = sum(q["points"] for q in exam["questions"])
     if exam["config"].get("plan_id"):
         plan = planning.detail(exam["config"]["plan_id"])
@@ -190,9 +191,12 @@ async def upload_document(course_id: str, file: UploadFile = File(...), kind: st
     path = db.DATA_DIR / "uploads" / f"{document_id}.pdf"
     committed = False
     try:
-        if file.size is not None and file.size > limits.MAX_PDF_BYTES:
+        file.file.seek(0)
+        is_pdf = file.file.read(1024).lstrip().startswith(b"%PDF-")
+        file.file.seek(0)
+        if is_pdf and file.size is not None and file.size > limits.MAX_PDF_BYTES:
             raise HTTPException(413, f"PDF 不能超过 {limits.MAX_PDF_MB} MB。")
-        pages, outline, warnings = await run_in_threadpool(save_and_extract_pdf, file.file, path)
+        pages, outline, warnings = await run_in_threadpool(save_and_extract_pdf if is_pdf else save_image_as_pdf, file.file, path)
         # A long-running upload must not recreate a course deleted in another tab.
         required("courses", course_id)
         with db.connection() as con:
@@ -215,7 +219,7 @@ async def upload_document(course_id: str, file: UploadFile = File(...), kind: st
 @api.get("/documents/{document_id}/file")
 def document_file(document_id: str):
     doc = required("documents", document_id)
-    return FileResponse(db.DATA_DIR / "uploads" / f"{document_id}.pdf", media_type="application/pdf", filename=doc["name"], content_disposition_type="inline")
+    return FileResponse(db.DATA_DIR / "uploads" / f"{document_id}.pdf", media_type="application/pdf", filename=doc["name"] if doc["name"].lower().endswith(".pdf") else doc["name"]+".pdf", content_disposition_type="inline")
 
 
 @api.get("/documents/{document_id}/pages/{number}")
@@ -482,12 +486,42 @@ async def pause_exam(exam_id: str):
     return {"ok": True, "message": "当前调用结束后暂停，已完成的题目会保留。"}
 
 
+@api.put("/exams/{exam_id}/budget")
+def update_budget(exam_id: str, payload: BudgetInput):
+    exam = ensure_idle(exam_id)
+    config = json.loads(exam['config'])
+    config.update(payload.model_dump())
+    db.execute('UPDATE exams SET config=? WHERE id=?',(db.dump(config),exam_id))
+    return exam_detail(exam_id)
+
+
+@api.post("/questions/{question_id}/explanation")
+async def expand_explanation(question_id: str):
+    question = required('questions',question_id)
+    exam = ensure_idle(question['exam_id'])
+    if question['status'] != 'ready': raise HTTPException(409,'请先完成题目生成。')
+    if not security.api_key(): raise HTTPException(422,'请先配置 DeepSeek API Key。')
+    active_exams.add(exam['id'])
+    try:
+        await explanations.expand(question,exam)
+    except (GenerationError,deepseek.ClientSetupError) as exc:
+        raise HTTPException(422,str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(422,'补充详解失败，原解析已保留；已报告用量已记录。') from exc
+    finally:
+        active_exams.discard(exam['id'])
+    return db.question(required('questions',question_id))
+
+
 @api.post("/exams/{exam_id}/retry")
 async def retry_exam(exam_id: str, background: BackgroundTasks):
     exam = ensure_idle(exam_id)
     if not security.api_key():
         raise HTTPException(422, "请先配置 DeepSeek API Key。")
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
+    config=json.loads(exam['config'])
+    if config.get('token_budget') and exam['tokens'] >= config['token_budget']:
+        raise HTTPException(422,'已达到 token 预算阈值，请先调整预算。')
     pending = db.one("SELECT count(*) AS n FROM questions WHERE exam_id=? AND status!='ready'", (exam_id,))["n"]
     if not pending:
         return exam_detail(exam_id)
@@ -511,7 +545,7 @@ async def regenerate(question_id: str, background: BackgroundTasks):
     if not security.api_key():
         raise HTTPException(422, "请先配置 DeepSeek API Key。")
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
-    db.execute("UPDATE questions SET status='pending',error='' WHERE id=?", (question_id,))
+    db.execute("UPDATE questions SET candidate='',status='pending',error='' WHERE id=?", (question_id,))
     db.execute("UPDATE exams SET status='queued',error='' WHERE id=?", (question["exam_id"],))
     background.add_task(run_generation, question["exam_id"])
     return {"ok": True}
@@ -537,7 +571,7 @@ def edit_question(question_id: str, payload: QuestionEdit):
         raise HTTPException(422, str(exc)) from exc
     names = {(r["document_id"], r["page"]): r["name"] for r in refs}
     sources = [{**s.model_dump(), "name": names[(s.document_id, s.page)]} for s in payload.sources]
-    db.execute("""UPDATE questions SET stem=?,options=?,answer=?,explanation=?,rubric=?,knowledge=?,sources=?,blanks=?,review='{}',points=?,status='ready',error='',self_score=NULL,is_wrong=0 WHERE id=?""",
+    db.execute("""UPDATE questions SET candidate='',stem=?,options=?,answer=?,explanation=?,rubric=?,knowledge=?,sources=?,blanks=?,review='{}',points=?,status='ready',error='',self_score=NULL,is_wrong=0 WHERE id=?""",
         (payload.stem, db.dump(payload.options), checked.answer, payload.explanation, db.dump(payload.rubric), payload.knowledge, db.dump(sources), db.dump([b.model_dump() for b in checked.blanks]), payload.points, question_id))
     refresh_exam(question["exam_id"])
     return db.question(required("questions", question_id))

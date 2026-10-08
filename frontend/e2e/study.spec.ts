@@ -404,3 +404,59 @@ test('规划刷新恢复、草稿保存、资料变化提示及本地答案核�
   await expect(page.getByText(/依据已变化：.*第 1 页/)).toBeVisible();
   await expect(page.getByLabel('第 1 题设问目标')).toHaveValue('人工保存的目标');
 });
+
+test('图片往年卷 → 可选命题指令 → 参考题型分配 → 草稿恢复', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await page.getByLabel('访问口令').fill('browser-test-only');
+  await page.getByRole('button', { name: '开始学习', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '今天，也学得更扎实一点。' })).toBeVisible();
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '图片往年卷测试' } })
+  ).json();
+  await page.goto(`/courses/${course.id}`);
+  const picture = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from PIL import Image; import sys; Image.new("RGB",(800,1000),"white").save(sys.stdout.buffer,format="PNG")',
+    ],
+    { cwd: '..' },
+  );
+  await page.getByLabel('资料类型').selectOption('往年试卷');
+  await page
+    .locator('input[type=file]')
+    .setInputFiles({ name: 'past-exam.png', mimeType: 'image/png', buffer: picture });
+  await expect(page.getByText('past-exam.png', { exact: true })).toBeVisible();
+  await page.goto(`/generate?course=${course.id}`);
+  await page.locator('.scope-title input').check();
+  await page.getByRole('button', { name: '识别所选页', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '开始识别', exact: true }).click();
+  await page.getByRole('button', { name: '完成，返回出题', exact: true }).click();
+  await page.getByRole('button', { name: '参考往年卷', exact: true }).click();
+  await page
+    .getByLabel('自定义命题指令（可选）')
+    .fill('模仿往年题型和考点生成一份试卷，改变数字，保留考点。');
+  await page.getByText('用量与答案设置', { exact: true }).click();
+  await page.getByLabel('每题最多尝试次数（含首次）').fill('1');
+  await page.getByLabel('出题累计 token 预算阈值（0 为不限）').fill('50000');
+  await page.getByRole('button', { name: '生成考点分配表', exact: true }).click();
+  await expect(page.getByLabel('第 1 题题型', { exact: true })).toHaveValue('choice');
+  await page.getByLabel('第 1 题题型', { exact: true }).selectOption('fill');
+  await expect(page.getByText(/本次规划累计.*已保存/)).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('reference-instructions.png'),
+    fullPage: true,
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '继续上次规划', exact: true }).click();
+  await expect(page.getByLabel('自定义命题指令（可选）')).toHaveValue(
+    '模仿往年题型和考点生成一份试卷，改变数字，保留考点。',
+  );
+  await expect(page.getByLabel('第 1 题题型', { exact: true })).toHaveValue('fill');
+  await page.getByText('用量与答案设置', { exact: true }).click();
+  await expect(page.getByLabel('每题最多尝试次数（含首次）')).toHaveValue('1');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});

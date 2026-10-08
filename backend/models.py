@@ -25,6 +25,7 @@ class PageInput(BaseModel):
 
 
 class SourceRange(BaseModel):
+    role: Literal["auto", "knowledge", "reference"] = "auto"
     document_id: str
     start: int = Field(ge=1)
     end: int = Field(ge=1)
@@ -54,10 +55,15 @@ class ExamInput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     ranges: list[SourceRange] = Field(min_length=1, max_length=10)
     rules: list[TypeRule] = Field(min_length=1, max_length=5)
-    mode: Literal["custom", "random"] = "custom"
+    mode: Literal["custom", "random", "reference"] = "custom"
     random_count: int = Field(default=10, ge=1, le=30)
     difficulty: Literal["基础巩固", "综合应用", "挑战题"] = "基础巩固"
     focus: str = Field(default="", max_length=500)
+    instructions: str = Field(default="", max_length=2000)
+    max_attempts: int = Field(default=2, ge=1, le=3)
+    token_budget: int = Field(default=0, ge=0, le=10_000_000)
+    batch_generation: bool = False
+    answer_detail: Literal["concise", "full"] = "concise"
     duration: int = Field(default=60, ge=5, le=240)
     submission_id: str | None = Field(default=None, min_length=8, max_length=100)
     parent_plan_id: str | None = Field(default=None, max_length=64)
@@ -141,3 +147,8 @@ class PlanSaveInput(BaseModel):
 class AnswerCheckInput(BaseModel):
     answer: str = Field(default="", max_length=20000)
     blanks: list[str] = Field(default_factory=list, max_length=12)
+
+
+class BudgetInput(BaseModel):
+    token_budget: int = Field(ge=0, le=10_000_000)
+    max_attempts: int = Field(default=2, ge=1, le=3)

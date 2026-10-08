@@ -496,8 +496,9 @@ export function CoursePage() {
   const maxPages = settings.data?.max_pdf_pages ?? 2000;
   const sizeLimit = `${maxBytes / (1024 * 1024)} MB`;
   async function upload(file: File) {
-    if (file.size > maxBytes) {
-      setMessage(`PDF 不能超过 ${sizeLimit}。`);
+    const image = /\.(png|jpe?g|webp)$/i.test(file.name);
+    if (file.size > (image ? 20 * 1024 * 1024 : maxBytes)) {
+      setMessage(image ? '单张图片不能超过 20 MB。' : `PDF 不能超过 ${sizeLimit}。`);
       return;
     }
     setUploading(true);
@@ -591,7 +592,8 @@ export function CoursePage() {
                 : '把教材放进你的学习空间'}
             </h3>
             <p>
-              拖入 PDF，或点击选择文件。每份最多 {sizeLimit} / {maxPages} 页。
+              支持 PDF、JPG、PNG、WebP。PDF 最多 {sizeLimit} / {maxPages} 页；静态图片最多 20 MB /
+              4000 万像素，作为单页资料导入后识别。
             </p>
             {uploading && (
               <div role="status">
@@ -625,13 +627,13 @@ export function CoursePage() {
                 onClick={() => fileRef.current?.click()}
               >
                 <Plus size={16} />
-                {uploading ? '处理中…' : '选择 PDF'}
+                {uploading ? '处理中…' : '选择 PDF 或图片'}
               </button>
               <input
                 hidden
                 ref={fileRef}
                 type="file"
-                accept="application/pdf,.pdf"
+                accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
                 onChange={(e) => {
                   if (e.target.files?.[0]) void upload(e.target.files[0]);
                 }}

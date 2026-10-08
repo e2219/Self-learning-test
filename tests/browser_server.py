@@ -67,7 +67,7 @@ async def mock_plan(plan_id):
     row = db.one("SELECT * FROM exam_plans WHERE id=?", (plan_id,))
     refs = json.loads(row['materials'])
     ref = refs[0]
-    topics = [{'id': 'topic1', 'title': '事件独立性', 'objective': '根据独立性计算概率', 'weight': 1, 'reasons': ['测试主题'],
+    topics = [{'id': 'topic1', 'title': '事件独立性', 'objective': '根据独立性计算概率', 'weight': 1, 'reference_types': {'choice':3,'calculation':1} if json.loads(row['config']).get('mode')=='reference' else {}, 'reasons': ['测试主题'],
                'sources': [{'document_id': ref['document_id'], 'page': ref['page'], 'name': ref['name'], 'quote': ref['text'][:60]}]}]
     slots = planning.allocate(json.loads(row['config']), topics)
     db.execute("UPDATE exam_plans SET status='ready',topics=?,blueprint=?,tokens=50 WHERE id=?", (db.dump(topics),db.dump(slots),plan_id))

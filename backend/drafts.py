@@ -20,7 +20,7 @@ def source_manifest(config):
     result['course'] = digest(course)
     for r in config['ranges']:
         doc = db.one('SELECT kind FROM documents WHERE id=?', (r['document_id'],))
-        pages = {p.pop('number'):p for p in db.rows('SELECT number,text,table_flag,table_reviewed FROM pages WHERE document_id=? AND number BETWEEN ? AND ?', (r['document_id'],r['start'],r['end']))}
+        pages = {p.pop('number'):p for p in db.rows('SELECT number,text,edited,ocr_done,table_flag,table_reviewed FROM pages WHERE document_id=? AND number BETWEEN ? AND ?', (r['document_id'],r['start'],r['end']))}
         for n in range(r['start'], r['end']+1):
             page = pages.get(n)
             result[f"{r['document_id']}:{n}"] = digest({'page':page,'kind':doc})
@@ -48,7 +48,7 @@ def changes(row):
 def settings_changed(original, current):
     original={**original,'rules':sorted((r for r in original['rules'] if r['count']>0),key=lambda r:r['type'])}
     current={**current,'rules':sorted((r for r in current['rules'] if r['count']>0),key=lambda r:r['type'])}
-    ignore={'title','duration'}
+    ignore={'title','duration','token_budget','max_attempts','batch_generation'}
     return {k:v for k,v in clean_config(original).items() if k not in ignore} != {k:v for k,v in clean_config(current).items() if k not in ignore}
 
 

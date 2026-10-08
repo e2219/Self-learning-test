@@ -52,6 +52,11 @@ export function Generator() {
     [randomCount, setRandomCount] = useState(10),
     [difficulty, setDifficulty] = useState('基础巩固'),
     [focus, setFocus] = useState(''),
+    [instructions, setInstructions] = useState(''),
+    [maxAttempts, setMaxAttempts] = useState(2),
+    [batchGeneration, setBatchGeneration] = useState(false),
+    [tokenBudget, setTokenBudget] = useState(0),
+    [answerDetail, setAnswerDetail] = useState<'concise' | 'full'>('concise'),
     [style, setStyle] = useState('适度变式'),
     [duration, setDuration] = useState(60),
     [plan, setPlan] = useState<ExamPlan | null>(null),
@@ -109,6 +114,11 @@ export function Generator() {
       random_count: randomCount,
       difficulty,
       focus,
+      instructions,
+      max_attempts: maxAttempts,
+      token_budget: tokenBudget,
+      batch_generation: batchGeneration,
+      answer_detail: answerDetail,
       duration,
       style,
       plan_id: plan?.id,
@@ -123,6 +133,11 @@ export function Generator() {
     setRules(initialRules.map((r) => c.rules.find((s) => s.type === r.type) || { ...r, count: 0 }));
     setDifficulty(c.difficulty);
     setFocus(c.focus);
+    setInstructions(c.instructions || '');
+    setMaxAttempts(c.max_attempts ?? 2);
+    setTokenBudget(c.token_budget ?? 0);
+    setBatchGeneration(c.batch_generation ?? false);
+    setAnswerDetail(c.answer_detail || 'concise');
     setStyle(c.style || '适度变式');
     setDuration(c.duration);
   }
@@ -386,6 +401,20 @@ export function Generator() {
                       {scope && (
                         <div className="scope-fields">
                           <label>
+                            资料用途
+                            <select
+                              aria-label={`${doc.name} 资料用途`}
+                              value={scope.role || 'auto'}
+                              onChange={(e) =>
+                                updateRange(doc.id, { role: e.target.value as SourceRange['role'] })
+                              }
+                            >
+                              <option value="auto">按资料类型自动区分</option>
+                              <option value="knowledge">知识依据（教材 / 笔记）</option>
+                              <option value="reference">命题参考（往年卷 / 样题）</option>
+                            </select>
+                          </label>
+                          <label>
                             开始页
                             <input
                               aria-label={`${doc.name} 开始页`}
@@ -477,6 +506,16 @@ export function Generator() {
                   <Shuffle size={16} />
                   随机搭配
                 </button>
+                <button
+                  type="button"
+                  className={mode === 'reference' ? 'selected' : ''}
+                  onClick={() => {
+                    setMode('reference');
+                    setRules(rules.map((r) => ({ ...r, count: 1 })));
+                  }}
+                >
+                  参考往年卷
+                </button>
               </div>
               <div className="rule-table">
                 <div className="rule-row rule-header">
@@ -534,7 +573,7 @@ export function Generator() {
                   </div>
                 ))}
               </div>
-              {mode === 'random' && (
+              {mode !== 'custom' && (
                 <label className="random-count">
                   试卷总题量
                   <input
@@ -545,7 +584,9 @@ export function Generator() {
                     onChange={(e) => setRandomCount(Number(e.target.value))}
                   />
                   <span className="field-help">
-                    各题型随机分配，可能不包含所有选中题型；总分生成后确定。
+                    {mode === 'reference'
+                      ? '按命题参考中提取的题型和考点比例分配，题数以本页设置为准；不保证还原原卷，生成前请查看分配表。'
+                      : '各题型随机分配，可能不包含所有选中题型；总分生成后确定。'}
                   </span>
                 </label>
               )}
@@ -588,6 +629,62 @@ export function Generator() {
                   placeholder="例如：重点练习条件概率与事件独立性，注意区分两者的概念。"
                 />
               </label>
+              <label>
+                自定义命题指令（可选）
+                <textarea
+                  rows={3}
+                  maxLength={2000}
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder="例如：模仿往年题型和考点生成一份试卷，改变数值与情境，避免直接复制原题。题型比例请同时选择“参考往年卷”。"
+                />
+              </label>
+              <details>
+                <summary>用量与答案设置</summary>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={batchGeneration}
+                    onChange={(e) => setBatchGeneration(e.target.checked)}
+                  />
+                  尝试合并两道共用相同依据的题目（逐题独立审查，复杂题建议关闭）
+                </label>
+                <label>
+                  每题最多尝试次数（含首次）
+                  <input
+                    type="number"
+                    min={1}
+                    max={3}
+                    value={maxAttempts}
+                    onChange={(e) => setMaxAttempts(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  出题累计 token 预算阈值（0 为不限）
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000000}
+                    step={1000}
+                    value={tokenBudget}
+                    onChange={(e) => setTokenBudget(Number(e.target.value))}
+                  />
+                </label>
+                <p className="field-help">
+                  累计包含生成与审题、失败请求已报告的用量；达到阈值后暂停后续调用，当前请求可能超出。规划和
+                  OCR 另计。网络失败未报告的用量无法计入。
+                </p>
+                <label>
+                  解析详细程度
+                  <select
+                    value={answerDetail}
+                    onChange={(e) => setAnswerDetail(e.target.value as 'concise' | 'full')}
+                  >
+                    <option value="concise">简洁解析（保留关键步骤）</option>
+                    <option value="full">详细推导</option>
+                  </select>
+                </label>
+              </details>
               <label>
                 出题方式
                 <select value={style} onChange={(e) => setStyle(e.target.value)}>
@@ -644,7 +741,13 @@ export function Generator() {
                 </div>
                 <div>
                   <dt>试卷总分</dt>
-                  <dd>{mode === 'custom' ? `${points} 分` : '随机分配后确定'}</dd>
+                  <dd>
+                    {mode === 'custom'
+                      ? `${points} 分`
+                      : mode === 'reference'
+                        ? '按参考分配后确定'
+                        : '随机分配后确定'}
+                  </dd>
                 </div>
                 <div>
                   <dt>难度</dt>
@@ -693,7 +796,8 @@ export function Generator() {
                 {previewBusy ? '正在读取…' : '预览检索片段'}
               </button>
               <p className="summary-note">
-                生成将调用 DeepSeek API，按实际用量计费。每道题单独生成并保存，通常需要等待数分钟。
+                生成将调用 DeepSeek
+                API，按实际用量计费。题目逐题审查并保存，可在用量设置中开启小批量生成，通常需要等待数分钟。
               </p>
             </div>
             <div className="quiet-note">

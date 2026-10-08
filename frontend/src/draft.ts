@@ -9,7 +9,7 @@ function stable(value: unknown): string {
 export function planSettings(config: ExamConfig) {
   return stable([
     config.course_id,
-    config.ranges,
+    config.ranges.map((r) => ({ ...r, role: r.role || 'auto' })),
     config.rules
       .filter((r) => r.count > 0)
       .slice()
@@ -19,6 +19,8 @@ export function planSettings(config: ExamConfig) {
     config.difficulty,
     config.focus,
     config.style || '适度变式',
+    config.instructions || '',
+    config.answer_detail || 'concise',
   ]);
 }
 export function needsPlanning(plan: ExamPlan | null, config: ExamConfig) {
@@ -43,7 +45,15 @@ export function readLocalDraft(id: string): {
   }
 }
 export function draftSnapshot(config: ExamConfig, blueprint: ExamPlan['blueprint']) {
-  return stable([config.title, config.duration, planSettings(config), blueprint]);
+  return stable([
+    config.title,
+    config.duration,
+    planSettings(config),
+    config.token_budget ?? 0,
+    config.max_attempts ?? 2,
+    config.batch_generation ?? false,
+    blueprint,
+  ]);
 }
 
 // getRandomValues also works on the HTTP LAN address used by phones.

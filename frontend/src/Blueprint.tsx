@@ -1,3 +1,4 @@
+import { UsageBreakdown } from './Usage';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { draftSnapshot, localDraftKey, needsPlanning, newSubmissionId } from './draft';
@@ -210,6 +211,7 @@ export const Blueprint = forwardRef<
           <p className="field-help">
             本次规划累计 {plan.tokens} tokens · 复用 {plan.cache_hits} 个资料片段 · {saveState}
           </p>
+          <UsageBreakdown rows={plan.usage} />
           {plan.exam_id && (
             <Notice>
               这份规划已经提交。<Link to={`/exams/${plan.exam_id}`}>查看已生成试卷</Link>
@@ -297,6 +299,33 @@ export const Blueprint = forwardRef<
                   ))}
                 </select>
               </label>
+              {config.mode === 'reference' && (
+                <label>
+                  题型
+                  <select
+                    aria-label={`第 ${i + 1} 题题型`}
+                    value={slot.type}
+                    disabled={!!plan.exam_id}
+                    onChange={(e) => {
+                      const rule = config.rules.find((r) => r.type === e.target.value)!;
+                      update({
+                        ...plan,
+                        blueprint: plan.blueprint.map((s, j) =>
+                          i === j ? { ...s, type: rule.type, points: rule.points } : s,
+                        ),
+                      });
+                    }}
+                  >
+                    {config.rules
+                      .filter((r) => r.count > 0)
+                      .map((r) => (
+                        <option key={r.type} value={r.type}>
+                          {typeNames[r.type]}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
               <label>
                 设问目标
                 <input
