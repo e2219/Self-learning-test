@@ -1,5 +1,6 @@
-import { Blueprint } from './Blueprint';
-import { useEffect, useState } from 'react';
+import { Blueprint, type DraftHandle } from './Blueprint';
+import { localDraftKey, needsPlanning, readLocalDraft, draftSnapshot } from './draft';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -36,6 +37,10 @@ const initialRules = (Object.keys(typeNames) as QuestionType[]).map((type) => ({
 export function Generator() {
   const [params] = useSearchParams(),
     navigate = useNavigate();
+  const draftRef = useRef<DraftHandle>(null),
+    submitting = useRef(false);
+  const [latest, setLatest] = useState<ExamPlan | null>(null),
+    [localRecovery, setLocalRecovery] = useState<ReturnType<typeof readLocalDraft>>(null);
   const courses = useRemote<Course[]>('/courses'),
     settings = useRemote<Settings>('/settings');
   const [courseId, setCourseId] = useState(params.get('course') || ''),
@@ -63,8 +68,18 @@ export function Generator() {
     let current = true;
     setDocs([]);
     setRanges([]);
+    setPlan(null);
+    setLatest(null);
+    setLocalRecovery(null);
     if (!courseId) return;
     setDocsLoading(true);
+    api<ExamPlan | null>(`/courses/${courseId}/exam-plans/latest`)
+      .then((data) => {
+        if (current) setLatest(data);
+      })
+      .catch((e) => {
+        if (current) setError(e.message);
+      });
     api<Document[]>(`/courses/${courseId}/documents`)
       .then((data) => {
         if (current) setDocs(data);
@@ -79,19 +94,6 @@ export function Generator() {
       current = false;
     };
   }, [courseId]);
-  const planKey = JSON.stringify({
-    courseId,
-    ranges,
-    rules,
-    mode,
-    randomCount,
-    difficulty,
-    focus,
-    style,
-  });
-  useEffect(() => {
-    setPlan(null);
-  }, [planKey]);
   const course = courses.data?.find((c) => c.id === courseId);
   const count = mode === 'custom' ? rules.reduce((n, r) => n + r.count, 0) : randomCount;
   const points = rules.reduce((n, r) => n + r.count * r.points, 0);
@@ -112,6 +114,39 @@ export function Generator() {
       plan_id: plan?.id,
       blueprint: plan?.blueprint,
     };
+  }
+  function applyConfig(c: ExamConfig) {
+    setTitle(c.title);
+    setRanges(c.ranges);
+    setMode(c.mode);
+    setRandomCount(c.random_count);
+    setRules(initialRules.map((r) => c.rules.find((s) => s.type === r.type) || { ...r, count: 0 }));
+    setDifficulty(c.difficulty);
+    setFocus(c.focus);
+    setStyle(c.style || '适度变式');
+    setDuration(c.duration);
+  }
+  async function restore() {
+    if (!latest) return;
+    try {
+      const data = await api<ExamPlan>(`/exam-plans/${latest.id}`);
+      const stored = readLocalDraft(data.id);
+      const local = stored && {
+        ...stored,
+        blueprint: stored.status && stored.status !== 'ready' ? data.blueprint : stored.blueprint,
+      };
+      applyConfig(data.config);
+      setPlan(data);
+      setLatest(null);
+      if (
+        local &&
+        !data.exam_id &&
+        draftSnapshot(local.config, local.blueprint) !== draftSnapshot(data.config, data.blueprint)
+      )
+        setLocalRecovery(local);
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
   function updateRange(id: string, patch: Partial<SourceRange>) {
     setRanges((prev) => prev.map((r) => (r.document_id === id ? { ...r, ...patch } : r)));
@@ -134,11 +169,65 @@ export function Generator() {
           close={() => {
             setOcrScope(null);
             setError('');
+            if (plan) {
+              api<ExamPlan>(`/exam-plans/${plan.id}`)
+                .then((data) =>
+                  setPlan((current) =>
+                    current?.id === data.id ? { ...data, blueprint: current.blueprint } : current,
+                  ),
+                )
+                .catch((e) => setError(e.message));
+            }
             api<Document[]>(`/courses/${courseId}/documents`)
               .then(setDocs)
               .catch((e) => setError(e.message));
           }}
         />
+      )}
+      {latest && !plan && (
+        <Notice>
+          上次规划：{latest.config.title} ·{' '}
+          {latest.status === 'running' || latest.status === 'queued'
+            ? '后台规划中'
+            : latest.exam_id
+              ? '已提交试卷'
+              : '已保存草稿'}{' '}
+          · {latest.updated_at}
+          <div className="button-group">
+            <button type="button" className="button secondary" onClick={() => void restore()}>
+              继续上次规划
+            </button>
+            <button type="button" className="button ghost" onClick={() => setLatest(null)}>
+              新建规划
+            </button>
+          </div>
+        </Notice>
+      )}
+      {localRecovery && plan && (
+        <Notice>
+          发现本机未保存的修改（基于版本 {localRecovery.revision}，服务器版本 {plan.revision}）。
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => {
+              applyConfig(localRecovery.config);
+              setPlan({ ...plan, blueprint: localRecovery.blueprint });
+              setLocalRecovery(null);
+            }}
+          >
+            恢复本机修改
+          </button>
+          <button
+            type="button"
+            className="button ghost"
+            onClick={() => {
+              localStorage.removeItem(localDraftKey(plan.id));
+              setLocalRecovery(null);
+            }}
+          >
+            使用已保存版本
+          </button>
+        </Notice>
       )}
       {error && <Notice tone="error">{error}</Notice>}
       {settings.data && !settings.data.has_key && (
@@ -169,19 +258,38 @@ export function Generator() {
           className="generator-layout"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!plan || plan.status !== 'ready') {
+            if (submitting.current) return;
+            if (!plan || needsPlanning(plan, payload())) {
               setError('请先生成并核对考点分配表。');
               return;
             }
+            submitting.current = true;
             setBusy(true);
             setError('');
             try {
-              const exam = await api<Exam>('/exams', json('POST', payload()));
+              await draftRef.current?.flush();
+              const exam = await api<Exam>(
+                '/exams',
+                json('POST', { ...payload(), submission_id: plan.id }),
+              );
               navigate(`/exams/${exam.id}`);
             } catch (err) {
               setError((err as Error).message);
+              if (plan) {
+                try {
+                  const saved = await api<ExamPlan>(`/exam-plans/${plan.id}`);
+                  setPlan(saved);
+                  if (saved.exam_id) {
+                    navigate(`/exams/${saved.exam_id}`);
+                    return;
+                  }
+                } catch {
+                  /* preserve current draft on network failure */
+                }
+              }
               window.scrollTo({ top: 0, behavior: 'smooth' });
             } finally {
+              submitting.current = false;
               setBusy(false);
             }
           }}
@@ -503,7 +611,10 @@ export function Generator() {
               </label>
             </section>
             <Blueprint
-              key={planKey}
+              key={plan?.id || courseId}
+              ref={draftRef}
+              suspendSave={!!localRecovery}
+              plan={plan}
               config={payload()}
               enabled={!!valid && !!settings.data?.has_key}
               changed={setPlan}
@@ -547,7 +658,14 @@ export function Generator() {
               <button
                 className="button primary full"
                 type="submit"
-                disabled={busy || !valid || !settings.data?.has_key || plan?.status !== 'ready'}
+                disabled={
+                  busy ||
+                  !valid ||
+                  !settings.data?.has_key ||
+                  needsPlanning(plan, payload()) ||
+                  !!plan?.exam_id ||
+                  !!localRecovery
+                }
               >
                 <Sparkles size={17} />
                 {busy ? '正在创建…' : '确认分配并生成测验'}

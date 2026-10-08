@@ -11,9 +11,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security, ocr, deepseek, materials, planning
+from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
-from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput
+from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
 
 
@@ -361,22 +361,55 @@ def retrieval_preview(payload: ExamInput):
 
 @api.post("/exam-plans", status_code=201)
 async def create_plan(payload: ExamInput, background: BackgroundTasks):
-    validate_ranges(payload)
-    if not security.api_key():
-        raise HTTPException(422, "请先配置 DeepSeek API Key。")
-    if db.one("SELECT id FROM exam_plans WHERE status IN ('queued','running')"):
-        raise HTTPException(409, "已有考点规划正在进行，请等待完成。")
     config = payload.model_dump()
     config.update(plan_id=None, blueprint=[])
+    if payload.submission_id:
+        existing=db.one('SELECT * FROM exam_plans WHERE submission_id=?',(payload.submission_id,))
+        if existing:
+            if drafts.clean_config(json.loads(existing['config'])) != drafts.clean_config(config):
+                raise HTTPException(409,'同一规划提交标识不能用于不同设置。')
+            return planning.detail(existing['id'])
+    validate_ranges(payload)
+    if payload.parent_plan_id:
+        parent=required('exam_plans',payload.parent_plan_id)
+        if parent['course_id']!=payload.course_id: raise HTTPException(422,'原规划不属于此课程。')
     try:
         refs, excluded = planning.prepare(config)
     except GenerationError as exc:
         raise HTTPException(422, str(exc)) from exc
     plan_id = uuid.uuid4().hex
-    db.execute("INSERT INTO exam_plans(id,course_id,config,fingerprint,materials,excluded) VALUES (?,?,?,?,?,?)",
-        (plan_id, payload.course_id, db.dump(config), planning.fingerprint(config, refs), db.dump(refs), db.dump(excluded)))
+    with db.connection() as con:
+        con.execute('BEGIN IMMEDIATE')
+        if payload.submission_id:
+            existing=con.execute('SELECT id,config FROM exam_plans WHERE submission_id=?',(payload.submission_id,)).fetchone()
+            if existing:
+                if drafts.clean_config(json.loads(existing['config'])) != drafts.clean_config(config): raise HTTPException(409,'同一规划提交标识不能用于不同设置。')
+                return planning.detail(existing['id'])
+        if con.execute("SELECT 1 FROM exam_plans WHERE status IN ('queued','running')").fetchone():
+            raise HTTPException(409,'已有考点规划正在进行，请继续上次规划查看进度。')
+        con.execute("INSERT INTO exam_plans(id,course_id,config,fingerprint,materials,excluded,manifest,parent_id,submission_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            (plan_id,payload.course_id,db.dump(config),planning.fingerprint(config,refs),db.dump(refs),db.dump(excluded),db.dump(drafts.source_manifest(config)),payload.parent_plan_id,payload.submission_id))
     background.add_task(planning.run_plan, plan_id)
     return planning.detail(plan_id)
+
+
+@api.get('/courses/{course_id}/exam-plans/latest')
+def latest_plan(course_id: str):
+    required('courses',course_id)
+    row=db.one('SELECT id FROM exam_plans WHERE course_id=? ORDER BY updated_at DESC,rowid DESC LIMIT 1',(course_id,))
+    return planning.detail(row['id']) if row else None
+
+
+@api.put('/exam-plans/{plan_id}/draft')
+def save_plan(plan_id: str, payload: PlanSaveInput):
+    drafts.save(plan_id,payload)
+    return planning.detail(plan_id)
+
+
+@api.get('/exam-plans/{plan_id}/history')
+def plan_history(plan_id: str):
+    required('exam_plans',plan_id)
+    return drafts.history(plan_id)
 
 
 @api.post("/exam-plans/{plan_id}/cancel")
@@ -396,22 +429,33 @@ def get_plan(plan_id: str):
 
 @api.post("/exams", status_code=201)
 async def create_exam(payload: ExamInput, background: BackgroundTasks):
-    validate_ranges(payload)
-    if not security.api_key():
-        raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
-    try:
-        planning.validate_blueprint(payload)
-    except GenerationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    # Async route with no await until insert: prevent duplicate scheduling in this process.
-    if db.one("SELECT id FROM exams WHERE status IN ('queued','generating')"):
-        raise HTTPException(409, "已有试卷正在生成，请等待完成后再创建。")
-    exam_id = uuid.uuid4().hex
+    request_hash=drafts.digest({k:v for k,v in payload.model_dump().items() if k not in ('submission_id','parent_plan_id')})
+    keys=[]
+    if payload.submission_id: keys.append('request:'+payload.submission_id)
+    if payload.plan_id: keys.append('plan:'+payload.plan_id)
+    exam_id=uuid.uuid4().hex
     with db.connection() as con:
-        con.execute("INSERT INTO exams(id,course_id,title,config) VALUES (?,?,?,?)", (exam_id, payload.course_id, payload.title, db.dump(payload.model_dump())))
-        for index, rule in enumerate(payload.blueprint or plan_questions(payload), 1):
-            con.execute("INSERT INTO questions(id,exam_id,position,type,points) VALUES (?,?,?,?,?)", (uuid.uuid4().hex, exam_id, index, rule.type, rule.points))
-    background.add_task(run_generation, exam_id)
+        con.execute('BEGIN IMMEDIATE')
+        for key in keys:
+            existing=con.execute('SELECT * FROM exam_submissions WHERE key=?',(key,)).fetchone()
+            if existing:
+                if existing['request_hash']!=request_hash:
+                    raise HTTPException(409,'这份规划或提交标识已用于另一份设置，请查看原试卷，或新建规划。')
+                if not con.execute('SELECT 1 FROM exams WHERE id=?',(existing['exam_id'],)).fetchone():
+                    raise HTTPException(410,'原试卷已删除；不会重复创建，请新建规划。')
+                return exam_detail(existing['exam_id'])
+        validate_ranges(payload)
+        if not security.api_key(): raise HTTPException(422,'请先在设置中配置 DeepSeek API Key。')
+        try: planning.validate_blueprint(payload)
+        except GenerationError as exc: raise HTTPException(422,str(exc)) from exc
+        if con.execute("SELECT 1 FROM exams WHERE status IN ('queued','generating')").fetchone():
+            raise HTTPException(409,'已有试卷正在生成，请等待完成后再创建。')
+        con.execute('INSERT INTO exams(id,course_id,title,config) VALUES (?,?,?,?)',(exam_id,payload.course_id,payload.title,db.dump(payload.model_dump())))
+        for index, rule in enumerate(payload.blueprint or plan_questions(payload),1):
+            con.execute('INSERT INTO questions(id,exam_id,position,type,points) VALUES (?,?,?,?,?)',(uuid.uuid4().hex,exam_id,index,rule.type,rule.points))
+        for key in keys:
+            con.execute('INSERT INTO exam_submissions(key,request_hash,exam_id) VALUES (?,?,?)',(key,request_hash,exam_id))
+    background.add_task(run_generation,exam_id)
     return exam_detail(exam_id)
 
 
@@ -507,6 +551,14 @@ def delete_question(question_id: str):
     db.execute("DELETE FROM questions WHERE id=?", (question_id,))
     refresh_exam(question["exam_id"])
     return {"ok": True}
+
+
+@api.post('/questions/{question_id}/check-answer')
+def check_answer(question_id: str, payload: AnswerCheckInput):
+    question=db.question(required('questions',question_id))
+    if question['status']!='ready': raise HTTPException(409,'请等待题目生成完成。')
+    try: return answer_check.check(question,payload)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
 
 
 @api.patch("/questions/{question_id}/progress")

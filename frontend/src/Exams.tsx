@@ -1,3 +1,9 @@
+import {
+  AnswerCheck,
+  parseBlankAnswers,
+  isStructuredAnswer,
+  displaySavedAnswer,
+} from './AnswerCheck';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -307,7 +313,9 @@ function AttemptHistory({ question, close }: { question: Question; close: () => 
               </strong>
               <span className="muted">{new Date(a.created_at).toLocaleString('zh-CN')}</span>
             </div>
-            <p className="attempt-answer">{a.user_answer || '纸上作答（未填写文字答案）'}</p>
+            <p className="attempt-answer">
+              {displaySavedAnswer(a.snapshot, a.user_answer) || '纸上作答（未填写文字答案）'}
+            </p>
             <details>
               <summary>查看当时的题目与答案</summary>
               <MathText>{a.snapshot.stem}</MathText>
@@ -353,8 +361,10 @@ export function QuestionCard({
     [history, setHistory] = useState(false);
   useEffect(() => {
     setAnswer(q.user_answer);
+  }, [q.id, q.user_answer]);
+  useEffect(() => {
     setScore(q.self_score === null ? '' : String(q.self_score));
-  }, [q.user_answer, q.self_score]);
+  }, [q.id, q.self_score]);
   useEffect(() => {
     setRevealed(false);
   }, [q.stem]);
@@ -520,6 +530,31 @@ export function QuestionCard({
                     </button>
                   ))}
                 </div>
+              ) : q.type === 'fill' && !!q.blanks?.length ? (
+                <div>
+                  {q.user_answer && !isStructuredAnswer(q.user_answer) && (
+                    <Notice>
+                      以前保存的整段作答：{q.user_answer}
+                      。请逐空填写后核验；保存新作答会替换这段文字。
+                    </Notice>
+                  )}
+                  <div className="form-grid">
+                    {q.blanks.map((_, i) => (
+                      <label key={i}>
+                        第 {i + 1} 空
+                        <input
+                          aria-label={`第 ${i + 1} 空答案`}
+                          value={parseBlankAnswers(answer, q.blanks!.length)[i]}
+                          onChange={(e) => {
+                            const next = parseBlankAnswers(answer, q.blanks!.length);
+                            next[i] = e.target.value;
+                            setAnswer(JSON.stringify(next));
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
               ) : (
                 q.type !== 'choice' && (
                   <label>
@@ -533,6 +568,14 @@ export function QuestionCard({
                   </label>
                 )
               )}
+              <AnswerCheck
+                question={q}
+                answer={answer}
+                apply={(value) => {
+                  setScore(String(value));
+                  setRevealed(true);
+                }}
+              />
               <div className="answer-actions">
                 {(q.self_score !== null || q.user_answer) && (
                   <button
@@ -608,7 +651,7 @@ export function QuestionCard({
                           type="number"
                           min={0}
                           max={q.points}
-                          step={0.5}
+                          step="any"
                           value={score}
                           onChange={(e) => setScore(e.target.value)}
                         />

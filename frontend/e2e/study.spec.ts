@@ -266,3 +266,125 @@ test('表格核对 → 局部识别草稿 → 调整考点 → 填空与打印',
   await page.emulateMedia({ media: 'print' });
   await page.screenshot({ path: testInfo.outputPath('fill-print.png'), fullPage: true });
 });
+
+test('规划刷新恢复、草稿保存、资料变化提示及本地答案核验', async ({ page }, testInfo) => {
+  await page.addInitScript(() => Object.defineProperty(crypto, 'randomUUID', { value: undefined }));
+  await page.request.post('/api/login', { data: { code: 'browser-test-only' } });
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '草稿恢复验证' } })
+  ).json();
+  const pdf = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from tests.test_api import sample_pdf; import sys; sys.stdout.buffer.write(sample_pdf())',
+    ],
+    { cwd: '..' },
+  );
+  const doc = await (
+    await page.request.post(`/api/courses/${course.id}/documents`, {
+      multipart: { file: { name: 'restore.pdf', mimeType: 'application/pdf', buffer: pdf } },
+    })
+  ).json();
+  let planningPosts = 0,
+    hold = true;
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().endsWith('/api/exam-plans')) planningPosts++;
+  });
+  await page.route(
+    /\/api\/(exam-plans\/[^/]+|courses\/[^/]+\/exam-plans\/latest)$/,
+    async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const response = await route.fetch();
+      const data = await response.json();
+      await route.fulfill({ response, json: data && hold ? { ...data, status: 'running' } : data });
+    },
+  );
+  await page.goto(`/generate?course=${course.id}`);
+  await page.locator('.scope-title input').check();
+  await page.getByLabel('选择题数量').fill('1');
+  await page.getByLabel('判断题数量').fill('1');
+  await page.getByLabel('填空题数量').fill('1');
+  await page.getByLabel('计算题数量').fill('0');
+  await page.getByRole('button', { name: '生成考点分配表' }).click();
+  await expect(page.getByText('正在阅读资料并规划考点…')).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '继续上次规划' }).click();
+  await expect(page.getByLabel('填空题数量')).toHaveValue('1');
+  await expect(page.getByText('正在阅读资料并规划考点…')).toBeVisible();
+  expect(planningPosts).toBe(1);
+  hold = false;
+  await expect(page.getByLabel('第 1 题考点', { exact: true })).toBeVisible();
+  await page.getByLabel('第 1 题设问目标').fill('人工保存的目标');
+  await page.getByLabel('试卷名称').fill('恢复后的试卷');
+  await expect(page.getByText(/本次规划累计.*已保存/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '继续上次规划' }).click();
+  await expect(page.getByLabel('试卷名称')).toHaveValue('恢复后的试卷');
+  await expect(page.getByLabel('第 1 题设问目标')).toHaveValue('人工保存的目标');
+  expect(planningPosts).toBe(1);
+  await page.getByRole('button', { name: '查看草稿修改记录' }).click();
+  await expect(page.getByText('第 1 题：人工保存的目标')).toBeVisible();
+  await page.route(/\/api\/exam-plans\/[^/]+\/draft$/, (route) => route.abort());
+  await page.getByLabel('试卷名称').fill('断网保留的试卷');
+  await expect(page.getByText(/未保存到服务器，本机修改已保留/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '继续上次规划' }).click();
+  await expect(page.getByRole('button', { name: '恢复本机修改' })).toBeVisible();
+  await page.unroute(/\/api\/exam-plans\/[^/]+\/draft$/);
+  await page.getByRole('button', { name: '恢复本机修改' }).click();
+  await expect(page.getByLabel('试卷名称')).toHaveValue('断网保留的试卷');
+  await expect(page.getByText(/本次规划累计.*已保存/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('restored-draft.png'), fullPage: true });
+  let examPosts = 0;
+  await page.route('**/api/exams', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    examPosts++;
+    await route.fetch(); // Simulate a created exam whose response never reaches the browser.
+    await route.abort();
+  });
+  await page.getByRole('button', { name: '确认分配并生成测验' }).click();
+  await expect(page.getByText('已生成 3 / 3 题')).toBeVisible({ timeout: 15000 });
+  const examUrl = page.url();
+  expect(examPosts).toBe(1);
+  const created = await (
+    await page.request.get(new URL(examUrl).pathname.replace('/exams/', '/api/exams/'))
+  ).json();
+  await page.request.patch(`/api/questions/${created.questions[2].id}/progress`, {
+    data: { user_answer: '旧作答：0.2 和 0.5' },
+  });
+  await page.reload();
+  const questions = page.locator('.question-card');
+  await expect(questions.nth(2).getByText(/以前保存的整段作答：旧作答/)).toBeVisible();
+  await questions.nth(0).locator('.option').first().click();
+  await questions.nth(0).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await expect(questions.nth(0).getByText('与参考答案一致', { exact: true })).toBeVisible();
+  await questions.nth(1).getByRole('button', { name: '正确', exact: true }).click();
+  await questions.nth(1).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await expect(questions.nth(1).getByText('与参考答案一致', { exact: true })).toBeVisible();
+  await questions.nth(2).getByLabel('第 1 空答案').fill('0.2');
+  await questions.nth(2).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await expect(questions.nth(2).getByText('第 1 空：与参考答案一致')).toBeVisible();
+  await expect(questions.nth(2).getByText('第 2 空：未作答')).toBeVisible();
+  await questions.nth(2).getByLabel('第 2 空答案').fill('0.5');
+  await questions.nth(2).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await questions.nth(2).getByRole('button', { name: '采用建议分数' }).click();
+  await expect(questions.nth(2).getByLabel('本题自评分', { exact: true })).toHaveValue('5');
+  await questions.nth(2).getByRole('button', { name: '保存评分', exact: true }).click();
+  await page.reload();
+  await expect(questions.nth(2).getByLabel('第 1 空答案')).toHaveValue('0.2');
+  await page.goto(`/generate?course=${course.id}`);
+  await page.getByRole('button', { name: '继续上次规划' }).click();
+  await expect(page.getByRole('link', { name: '查看已生成试卷' })).toHaveAttribute(
+    'href',
+    new URL(examUrl).pathname,
+  );
+  await expect(page.getByRole('button', { name: '确认分配并生成测验' })).toBeDisabled();
+  await page.request.put(`/api/documents/${doc.id}/pages/1`, {
+    data: { text: '新版本资料：独立事件乘法公式需要满足事件独立的条件。'.repeat(4) },
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '继续上次规划' }).click();
+  await expect(page.getByText(/依据已变化：.*第 1 页/)).toBeVisible();
+  await expect(page.getByLabel('第 1 题设问目标')).toHaveValue('人工保存的目标');
+});

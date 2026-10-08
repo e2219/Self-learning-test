@@ -71,6 +71,8 @@ export type ExamConfig = {
   focus: string;
   duration: number;
   style?: string;
+  submission_id?: string;
+  parent_plan_id?: string;
   plan_id?: string;
   blueprint?: PlanSlot[];
 };
@@ -103,6 +105,15 @@ export type Settings = {
 
 export type PlanSlot = { topic_id: string; type: QuestionType; points: number; objective: string };
 export type ExamPlan = {
+  config: ExamConfig;
+  basis_config: ExamConfig;
+  revision: number;
+  updated_at: string;
+  needs_replan: boolean;
+  source_changes: { key: string; label: string }[];
+  parent_id?: string;
+  exam_id?: string;
+  cache_hits: number;
   id: string;
   status: string;
   error: string;

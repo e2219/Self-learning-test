@@ -3737,3 +3737,10 @@ textarea::placeholder {
   padding: 0.6rem;
   text-align: left;
 }
+
+.local-answer-check {
+  margin: 14px 0;
+}
+.local-answer-check p {
+  margin: 8px 0;
+}

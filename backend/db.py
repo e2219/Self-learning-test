@@ -84,6 +84,18 @@ def init_db():
             blueprint TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'queued',
             tokens INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS plan_revisions (
+            plan_id TEXT NOT NULL REFERENCES exam_plans(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL, config TEXT NOT NULL, blueprint TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            PRIMARY KEY(plan_id,revision)
+        );
+        CREATE TABLE IF NOT EXISTS topic_cache (
+            key TEXT PRIMARY KEY, topics TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS exam_submissions (
+            key TEXT PRIMARY KEY, request_hash TEXT NOT NULL, exam_id TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_ocr_document ON ocr_jobs(document_id);
         CREATE INDEX IF NOT EXISTS idx_documents_course ON documents(course_id);
         CREATE INDEX IF NOT EXISTS idx_exams_course ON exams(course_id);
@@ -99,6 +111,14 @@ def init_db():
         for name, default in (("blanks", "[]"), ("review", "{}")):
             if name not in question_columns:
                 con.execute(f"ALTER TABLE questions ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
+        plan_columns = {r["name"] for r in con.execute("PRAGMA table_info(exam_plans)")}
+        for name, spec in (("draft_config", "TEXT NOT NULL DEFAULT ''"), ("draft_blueprint", "TEXT NOT NULL DEFAULT ''"),
+                ("manifest", "TEXT NOT NULL DEFAULT '{}'"), ("revision", "INTEGER NOT NULL DEFAULT 0"),
+                ("updated_at", "TEXT NOT NULL DEFAULT ''"), ("parent_id", "TEXT"),
+                ("cache_hits", "INTEGER NOT NULL DEFAULT 0"), ("submission_id", "TEXT")):
+            if name not in plan_columns:
+                con.execute(f"ALTER TABLE exam_plans ADD COLUMN {name} {spec}")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_submission ON exam_plans(submission_id) WHERE submission_id IS NOT NULL")
         ocr_columns = {r["name"] for r in con.execute("PRAGMA table_info(ocr_job_pages)")}
         if "stage" not in ocr_columns:
             con.execute("ALTER TABLE ocr_job_pages ADD COLUMN stage TEXT NOT NULL DEFAULT ''")

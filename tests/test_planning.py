@@ -13,7 +13,7 @@ def planner(monkeypatch, corrupt=False):
     original = httpx.AsyncClient
     def handler(request):
         data = json.loads(json.loads(request.content)['messages'][1]['content'])
-        ref = data['materials'][0]
+        ref = data['sources'][0]
         return httpx.Response(200, json=result({'topics': [{'title': '事件独立性', 'objective': '根据独立性计算联合概率', 'evidence_id': 'forged' if corrupt else ref['id']+':0'}]}))
     monkeypatch.setattr(planning.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
 

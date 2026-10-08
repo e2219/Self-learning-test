@@ -59,6 +59,8 @@ class ExamInput(BaseModel):
     difficulty: Literal["基础巩固", "综合应用", "挑战题"] = "基础巩固"
     focus: str = Field(default="", max_length=500)
     duration: int = Field(default=60, ge=5, le=240)
+    submission_id: str | None = Field(default=None, min_length=8, max_length=100)
+    parent_plan_id: str | None = Field(default=None, max_length=64)
     plan_id: str | None = Field(default=None, max_length=64)
     blueprint: list[PlanSlot] = Field(default_factory=list, max_length=30)
     style: Literal["贴近原题", "适度变式", "情景应用"] = "适度变式"
@@ -127,3 +129,14 @@ class RegionInput(BaseModel):
         if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
             raise ValueError("局部识别范围超出页面")
         return self
+
+
+class PlanSaveInput(BaseModel):
+    revision: int = Field(ge=0)
+    config: ExamInput
+    blueprint: list[PlanSlot] = Field(default_factory=list, max_length=30)
+
+
+class AnswerCheckInput(BaseModel):
+    answer: str = Field(default="", max_length=20000)
+    blanks: list[str] = Field(default_factory=list, max_length=12)
