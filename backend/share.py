@@ -1,4 +1,6 @@
 """Portable question content: never includes credentials, source files or user progress."""
+import hashlib
+import json
 import re
 import uuid
 from typing import Literal
@@ -65,15 +67,30 @@ def export_pack(title, course, questions, kind='exam'):
     ])
 
 
-def import_pack(pack):
+def import_pack(pack, target_course=None, source=None, import_key=None):
     from . import db
+    from fastapi import HTTPException
     exam_id, course_id = uuid.uuid4().hex, uuid.uuid4().hex
     config = {'course_id': course_id, 'title': pack.title, 'ranges': [], 'rules': [],
               'mode': 'custom', 'difficulty': '基础巩固', 'focus': '', 'duration': 60,
               'style': '适度变式', 'imported': True, 'kind': pack.kind}
+    if source:
+        config['shared_source'] = source
+    request_hash = hashlib.sha256(json.dumps({'pack': pack.model_dump(), 'course': target_course, 'source': source}, sort_keys=True).encode()).hexdigest()
     with db.connection() as con:
         con.execute('BEGIN IMMEDIATE')
+        if import_key:
+            prior = con.execute('SELECT exam_id,request_hash FROM library_imports WHERE key=?', (import_key,)).fetchone()
+            if prior:
+                # A source version has a stable default key; explicit copies use a submission key.
+                if import_key.startswith('copy:') and prior['request_hash'] != request_hash:
+                    raise HTTPException(409, '此导入标识已用于其他内容，请重新选择。')
+                return prior['exam_id']
         existing = con.execute('SELECT id FROM courses WHERE name=? ORDER BY created_at LIMIT 1', (pack.course,)).fetchone()
+        if target_course:
+            existing = con.execute('SELECT id FROM courses WHERE id=?', (target_course,)).fetchone()
+            if not existing:
+                raise HTTPException(404, '目标课程不存在，请重新选择。')
         if existing:
             course_id = existing['id']
             config['course_id'] = course_id
@@ -85,4 +102,6 @@ def import_pack(pack):
                 VALUES (?,?,?,?,?,'ready',?,?,?,?,?,?,?)""", (uuid.uuid4().hex, exam_id, pos, q.type, q.points,
                 q.stem, db.dump(q.options), q.answer, q.explanation, db.dump(q.rubric), q.knowledge,
                 db.dump([b.model_dump() for b in q.blanks])))
+        if import_key:
+            con.execute('INSERT INTO library_imports VALUES (?,?,?)', (import_key, exam_id, request_hash))
     return exam_id

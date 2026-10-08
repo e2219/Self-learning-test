@@ -21,6 +21,7 @@ import { Loading, Notice } from './ui';
 import { Courses, Dashboard, CoursePage } from './Courses';
 import { Generator } from './Generator';
 import { ExamPage, Exams, PrintPage, Review } from './Exams';
+import { LibraryApp } from './LibraryApp';
 import { SettingsPage } from './Settings';
 
 function Login({ onLogin }: { onLogin: () => void }) {
@@ -127,6 +128,7 @@ const nav = [
   { to: '/', label: '学习概览', icon: House },
   { to: '/courses', label: '我的课程', icon: BookOpen },
   { to: '/exams', label: '历史试卷', icon: FileText },
+  { to: '/library', label: '学习库', icon: BookOpen },
   { to: '/review', label: '错题与收藏', icon: NotebookPen },
   { to: '/settings', label: '应用设置', icon: Settings2 },
 ];
@@ -242,6 +244,7 @@ export default function App() {
         </header>
         <main className="main">
           <Routes>
+            <Route path="/library" element={<LibraryApp embedded />} />
             <Route path="/" element={<Dashboard />} />
             <Route path="/courses" element={<Courses />} />
             <Route path="/courses/:courseId" element={<CoursePage />} />

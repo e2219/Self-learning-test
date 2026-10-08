@@ -65,4 +65,8 @@ def initialize():
             CREATE INDEX IF NOT EXISTS idx_posts_library ON posts(library_id,updated_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
         ''')
+        columns = {r['name'] for r in con.execute('PRAGMA table_info(libraries)')}
+        for name in ('access_salt', 'access_hash'):
+            if name not in columns:
+                con.execute(f"ALTER TABLE libraries ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
     (DATA_DIR / 'library.sqlite3').chmod(0o600)

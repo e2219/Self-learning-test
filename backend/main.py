@@ -661,6 +661,8 @@ def review(course_id: str = "", mode: str = "wrong"):
         WHERE {condition} AND (?='' OR e.course_id=?) ORDER BY e.created_at DESC,q.position""", (course_id, course_id))]
 
 
+from .library_client import router as library_router
+app.include_router(library_router)
 app.include_router(api)
 
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

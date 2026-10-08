@@ -156,3 +156,18 @@
     padding: 20px;
   }
 }
+
+.library-embedded {
+  min-height: auto;
+  background: transparent;
+}
+.library-embedded .library-content {
+  width: 100%;
+  padding: 0;
+}
+.library-embedded .library-header {
+  padding: 0 0 24px;
+}
+.library-embedded code {
+  overflow-wrap: anywhere;
+}

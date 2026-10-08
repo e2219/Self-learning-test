@@ -128,10 +128,17 @@ class Registration(Credentials):
 class LibraryInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     description: str = Field(default='', max_length=500)
+    access_password: str = Field(default='', max_length=128)
 
 
 class JoinInput(BaseModel):
-    invite_code: str = Field(min_length=8, max_length=100)
+    invite_code: str = Field(default='', max_length=100)
+    library_id: str = Field(default='', max_length=64)
+    password: str = Field(default='', max_length=128)
+
+
+class AccessPasswordInput(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
 
 
 class PostInput(BaseModel):
@@ -153,7 +160,7 @@ class PasswordInput(BaseModel):
 
 @app.get('/api/health')
 def health():
-    return {'ok': True, 'service': 'shared-library'}
+    return {'ok': True, 'service': 'shared-library', 'integration_version': 1}
 
 
 @app.post('/api/register', status_code=201)
@@ -237,13 +244,18 @@ def create_library(payload: LibraryInput, user=Depends(current_user)):
     if not payload.name.strip():
         raise HTTPException(422, '学习库名称不能为空。')
     library_id, code = uuid.uuid4().hex, secrets.token_urlsafe(18)
+    access_password = payload.access_password or secrets.token_urlsafe(12)
+    if len(access_password) < 8:
+        raise HTTPException(422, '入库密码至少 8 位。')
+    salt = secrets.token_hex(16)
+    hashed = password_hash(access_password, salt)
     with store.connection() as con:
         con.execute('BEGIN IMMEDIATE')
         if con.execute('SELECT count(*) FROM libraries WHERE owner_id=?', (user['id'],)).fetchone()[0] >= 10:
             raise HTTPException(409, '每人最多创建 10 个学习库。')
-        con.execute('INSERT INTO libraries VALUES (?,?,?,?,?)', (library_id, payload.name.strip(), payload.description, user['id'], digest(code)))
+        con.execute('INSERT INTO libraries(id,name,description,owner_id,invite_hash,access_salt,access_hash) VALUES (?,?,?,?,?,?,?)', (library_id, payload.name.strip(), payload.description, user['id'], digest(code), salt, hashed))
         con.execute("INSERT INTO members VALUES (?,?,'owner')", (library_id, user['id']))
-    return {'id': library_id, 'invite_code': code}
+    return {'id': library_id, 'invite_code': code, 'access_password': access_password}
 
 
 @app.post('/api/libraries/join')
@@ -251,9 +263,15 @@ def join(payload: JoinInput, user=Depends(current_user)):
     rate('join:'+user['id'], 15, 300)
     with store.connection() as con:
         con.execute('BEGIN IMMEDIATE')
-        lib = con.execute('SELECT id FROM libraries WHERE invite_hash=?', (digest(payload.invite_code.strip()),)).fetchone()
-        if not lib:
-            raise HTTPException(404, '邀请码无效或已更换。')
+        if payload.library_id:
+            lib = con.execute('SELECT id,access_salt,access_hash FROM libraries WHERE id=?', (payload.library_id.strip(),)).fetchone()
+            valid = password_hash(payload.password, lib['access_salt'] if lib and lib['access_salt'] else '00'*16)
+            if not lib or not lib['access_hash'] or not hmac.compare_digest(valid, lib['access_hash']):
+                raise HTTPException(404, '库编号或入库密码不正确。')
+        else:
+            lib = con.execute('SELECT id FROM libraries WHERE invite_hash=?', (digest(payload.invite_code.strip()),)).fetchone() if payload.invite_code else None
+            if not lib:
+                raise HTTPException(404, '邀请码无效或已更换。')
         prior = con.execute('SELECT role FROM members WHERE library_id=? AND user_id=?', (lib['id'], user['id'])).fetchone()
         if prior and prior['role'] == 'removed':
             raise HTTPException(403, '你已被移出该学习库，请联系管理员恢复成员资格。')
@@ -279,6 +297,19 @@ def rotate_invite(library_id: str, user=Depends(current_user)):
         membership(con, library_id, user, manage=True)
         con.execute('UPDATE libraries SET invite_hash=? WHERE id=?', (digest(code), library_id))
     return {'invite_code': code}
+
+
+@app.put('/api/libraries/{library_id}/access-password')
+def change_access_password(library_id: str, payload: AccessPasswordInput, user=Depends(current_user)):
+    rate('access-password:'+user['id'], 20, 300)
+    salt = secrets.token_hex(16)
+    hashed = password_hash(payload.password, salt)
+    with store.connection() as con:
+        con.execute('BEGIN IMMEDIATE')
+        membership(con, library_id, user, manage=True)
+        con.execute('UPDATE libraries SET access_salt=?,access_hash=?,invite_hash=? WHERE id=?',
+                    (salt, hashed, digest(secrets.token_urlsafe(18)), library_id))
+    return {'ok': True}
 
 
 @app.put('/api/libraries/{library_id}/members/{member_id}')
@@ -308,10 +339,10 @@ def posts(library_id: str, search: str = '', kind: str = '', favorites: bool = F
         rows = con.execute('''SELECT p.*,u.nickname AS author,
             EXISTS(SELECT 1 FROM favorites f WHERE f.post_id=p.id AND f.user_id=?) AS favorite
             FROM posts p JOIN users u ON u.id=p.author_id WHERE p.library_id=?
-            AND (?='' OR p.kind=?) AND (p.title LIKE ? OR p.course LIKE ? OR p.note LIKE ?)
+            AND (?='' OR p.kind=?) AND (p.title LIKE ? OR p.course LIKE ? OR p.note LIKE ? OR u.nickname LIKE ?)
             AND (?=0 OR EXISTS(SELECT 1 FROM favorites f WHERE f.post_id=p.id AND f.user_id=?))
             ORDER BY p.updated_at DESC,p.rowid DESC LIMIT 50 OFFSET ?''',
-            (user['id'], library_id,kind,kind, '%'+search+'%','%'+search+'%','%'+search+'%',favorites,user['id'],offset))
+            (user['id'], library_id,kind,kind, '%'+search+'%','%'+search+'%','%'+search+'%','%'+search+'%',favorites,user['id'],offset))
         return [dict(r) for r in rows]
 
 
@@ -346,7 +377,7 @@ def get_post(post_id: str, revision: int | None = None, user=Depends(current_use
         author = con.execute('SELECT nickname FROM users WHERE id=?', (post['author_id'],)).fetchone()['nickname']
         history = [dict(r) for r in con.execute('SELECT revision,note,created_at FROM versions WHERE post_id=? ORDER BY revision DESC', (post_id,))]
         favorite = bool(con.execute('SELECT 1 FROM favorites WHERE post_id=? AND user_id=?', (post_id,user['id'])).fetchone())
-        return {**dict(post), 'author':author, 'owner_id':lib['owner_id'], 'view_revision':version['revision'],
+        return {**dict(post), 'author':author, 'library_name':lib['name'], 'owner_id':lib['owner_id'], 'view_revision':version['revision'],
                 'pack':json.loads(version['pack']), 'note':version['note'], 'history':history, 'favorite':favorite}
 
 

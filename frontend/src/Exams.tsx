@@ -123,30 +123,37 @@ export function Exams() {
       ) : filtered?.length ? (
         <div className="exam-grid">
           {filtered.map((e) => (
-            <Link className="exam-card" to={`/exams/${e.id}`} key={e.id}>
-              <div className="exam-card-top">
-                <div className="document-icon">
-                  <FileText size={24} />
+            <div key={e.id}>
+              <Link className="exam-card" to={`/exams/${e.id}`}>
+                <div className="exam-card-top">
+                  <div className="document-icon">
+                    <FileText size={24} />
+                  </div>
+                  <Status status={e.status} />
                 </div>
-                <Status status={e.status} />
-              </div>
-              <span className="eyebrow">{e.course_name}</span>
-              <h3>{e.title}</h3>
-              <div className="exam-card-details">
-                <span>{e.question_count} 道题</span>
-                <span>{e.total_points} 分</span>
-                <span>{date(e.created_at)}</span>
-              </div>
-              <div className="exam-card-footer">
-                <span>
-                  {e.ready_count}/{e.question_count} 题已生成
-                </span>
-                <span>
-                  打开试卷
-                  <ArrowRight size={15} />
-                </span>
-              </div>
-            </Link>
+                <span className="eyebrow">{e.course_name}</span>
+                <h3>{e.title}</h3>
+                <div className="exam-card-details">
+                  <span>{e.question_count} 道题</span>
+                  <span>{e.total_points} 分</span>
+                  <span>{date(e.created_at)}</span>
+                </div>
+                <div className="exam-card-footer">
+                  <span>
+                    {e.ready_count}/{e.question_count} 题已生成
+                  </span>
+                  <span>
+                    打开试卷
+                    <ArrowRight size={15} />
+                  </span>
+                </div>
+              </Link>
+              {(e.ready_count ?? 0) > 0 && (
+                <Link className="button secondary" to={`/library?share=${e.id}`}>
+                  分享到学习库
+                </Link>
+              )}
+            </div>
           ))}
         </div>
       ) : (
@@ -829,6 +836,11 @@ export function ExamPage() {
               <Share2 size={16} />
               导出试卷包
             </a>
+            {ready > 0 && (
+              <Link className="button secondary" to={`/library?share=${examId}`}>
+                分享到学习库
+              </Link>
+            )}
             <Link
               target="_blank"
               className={`button secondary ${ready ? '' : 'disabled'}`}
@@ -854,6 +866,7 @@ export function ExamPage() {
           这是导入的共享试卷。作答和评分仅保存在本机；未附原教材，不支持重新生成或修改题目内容。
         </Notice>
       )}
+      {data.config.shared_source && <SharedSource source={data.config.shared_source} />}
       {data.error && <Notice>{data.error}</Notice>}
       {data.coverage && (
         <details className="panel">
@@ -1196,5 +1209,53 @@ export function Review() {
         <span>第一版支持重做原题。之后可继续扩展同知识点变式题与复习计划。</span>
       </div>
     </>
+  );
+}
+
+function SharedSource({ source }: { source: NonNullable<Exam['config']['shared_source']> }) {
+  const [message, setMessage] = useState(''),
+    [busy, setBusy] = useState(false);
+  return (
+    <section className="panel">
+      <p>
+        来源：{source.author} · 学习库 {source.library_name || source.library_id} · 版本{' '}
+        {source.revision}
+      </p>
+      <p className="field-help">共享服务器：{source.server}</p>
+      <button
+        className="button secondary"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setMessage('');
+          try {
+            const config = await api<{ server: string }>('/library/connection');
+            if (config.server !== source.server)
+              throw new Error('请先在学习库中连接上述来源服务器。');
+            const status = await api<{ revision: number }>(
+              `/library/import-status/${source.post_id}`,
+            );
+            setMessage(
+              status.revision > source.revision
+                ? `有新版本 ${status.revision}，可前往来源查看后导入，现有作答保留。`
+                : '当前已是最新版本。',
+            );
+          } catch (e) {
+            setMessage((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        检查来源更新
+      </button>
+      <Link
+        className="button secondary"
+        to={`/library?library=${source.library_id}&post=${source.post_id}&server=${encodeURIComponent(source.server)}`}
+      >
+        查看来源试卷
+      </Link>
+      {message && <Notice>{message}</Notice>}
+    </section>
   );
 }
