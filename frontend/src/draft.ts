@@ -15,6 +15,8 @@ export function planSettings(config: ExamConfig) {
       .slice()
       .sort((a, b) => a.type.localeCompare(b.type)),
     config.mode,
+    config.reading_mode || 'study',
+    config.review_mode || 'full',
     config.random_count,
     config.difficulty,
     config.focus,

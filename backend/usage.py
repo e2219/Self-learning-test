@@ -18,17 +18,23 @@ def dumps(value):
 def record(owner_type, owner_id, stage, data, attempt=1):
     if not owner_id:
         return
-    usage = data.get('usage') if isinstance(data, dict) else None
+    data = data if isinstance(data, dict) else {}
+    usage = data.get('usage')
     if not isinstance(usage, dict): usage = {}
     def count(key):
         value = usage.get(key)
         return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-    db.execute('INSERT INTO usage_events(owner_type,owner_id,stage,attempt,model,input_tokens,output_tokens,cached_tokens,total_tokens) VALUES (?,?,?,?,?,?,?,?,?)',
-        (owner_type, owner_id, stage, attempt, str(data.get('model') or ''), count('prompt_tokens'), count('completion_tokens'), count('prompt_cache_hit_tokens'), count('total_tokens')))
+    details = usage.get('completion_tokens_details') or {}
+    reasoning = details.get('reasoning_tokens') if isinstance(details, dict) else None
+    if type(reasoning) is not int or reasoning < 0: reasoning = None
+    db.execute('INSERT INTO usage_events(owner_type,owner_id,stage,attempt,model,input_tokens,output_tokens,cached_tokens,total_tokens,reasoning_tokens) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        (owner_type, owner_id, stage, attempt, str(data.get('model') or ''), count('prompt_tokens'), count('completion_tokens'), count('prompt_cache_hit_tokens'), count('total_tokens'), reasoning))
 
 
 def summary(owner_type, owner_id):
     return db.rows('''SELECT stage,count(*) AS calls,sum(input_tokens) AS input_tokens,
         sum(output_tokens) AS output_tokens,sum(cached_tokens) AS cached_tokens,
+        group_concat(DISTINCT nullif(model,'')) AS models,sum(reasoning_tokens) AS reasoning_tokens,
+        sum(input_tokens IS NULL OR output_tokens IS NULL OR cached_tokens IS NULL) AS incomplete_calls,
         sum(total_tokens) AS total_tokens,sum(total_tokens IS NULL) AS unreported_calls,
         sum(attempt>1) AS retry_calls FROM usage_events WHERE owner_type=? AND owner_id=? GROUP BY stage''', (owner_type, owner_id))

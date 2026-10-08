@@ -7,7 +7,7 @@ from collections import Counter
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from . import db, deepseek, materials, drafts, usage
+from . import db, deepseek, materials, drafts, usage, vision
 from .generation import material_candidates, plan_questions, tokens, GenerationError, reported_usage
 from .models import ExamInput, QuestionType
 
@@ -21,6 +21,10 @@ class TopicDraft(BaseModel):
     objective: str = Field(min_length=2, max_length=500)
     evidence_id: str = Field(min_length=1, max_length=80)
     question_type: QuestionType | None = None
+    difficulty: str | None = Field(default=None, max_length=100)
+    original_points: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
+    question_style: str = Field(default='', max_length=200)
+    key_conditions: list[str] = Field(default_factory=list, max_length=8)
     occurrences: int = Field(default=1, ge=1, le=30)
 
 
@@ -34,12 +38,19 @@ def compact(text):
 
 def fingerprint(config, refs):
     keys = ('course_id', 'ranges', 'rules', 'mode', 'random_count', 'difficulty', 'focus', 'style', 'instructions', 'answer_detail')
+    if config.get('reading_mode', 'study') != 'study': keys += ('reading_mode',)
+    if config.get('review_mode', 'full') != 'full': keys += ('review_mode',)
     config={**config,'rules':sorted((r for r in config['rules'] if r['count']>0),key=lambda r:r['type'])}
     course = db.one('SELECT name,description FROM courses WHERE id=?', (config['course_id'],))
     return hashlib.sha256(db.dump({'config': {k: config.get(k) for k in keys}, 'course': course, 'refs': [{k:v for k,v in r.items() if k != 'name'} for r in refs]}).encode()).hexdigest()
 
 
 def prepare(config):
+    if config.get('reading_mode') == 'vision':
+        try:
+            refs = vision.references(config)
+            return [{**r,'id':str(i)} for i,r in enumerate(refs)], []
+        except ValueError as exc: raise GenerationError(str(exc)) from exc
     refs, excluded = material_candidates(config)
     if config.get('mode') == 'reference' and not any(r.get('role') == 'reference' for r in refs):
         raise GenerationError('参考往年卷模式需要至少一份可用的命题参考资料，请选择往年试卷或把资料用途设为命题参考。')
@@ -107,12 +118,15 @@ def validate_topics(payload, batch, focus):
         if not evidence:
             raise GenerationError('规划中的考点引用无法在原文找到，请重新规划。')
         ref, quote = evidence
+        if any(not c.strip() or compact(c) not in compact(quote) or len(c)>1200 for c in topic.key_conditions):
+            raise GenerationError('命题结构的关键条件无法在引用原文找到，请重新规划。')
         # Evidence-based priority signals, not a claim to know the teacher's exam.
         exercise = ref['kind'] in ('往年试卷', '习题集') or bool(re.search(r'习题|练习|思考题|课后题', ref['text']))
         learning_goal = bool(re.search(r'学习目标|教学目标|掌握|重点', ref['text']))
         focus_match = bool(tokens(focus) & tokens(topic.title + topic.objective + quote))
         result.append({'id': hashlib.sha256(compact(topic.title).encode()).hexdigest()[:16],
             'title': topic.title, 'objective': topic.objective,
+            'reference_structure': [topic.model_dump(include={'question_type','occurrences','difficulty','original_points','question_style','key_conditions'})] if ref.get('role') == 'reference' else [],
             'reference_types': {topic.question_type:topic.occurrences} if ref.get('role') == 'reference' and topic.question_type else {},
             'weight': 1 + 3 * focus_match + int(exercise) + int(learning_goal),
             'reasons': [label for flag, label in ((focus_match, '匹配指定重点'), (exercise, '习题资料'), (learning_goal, '学习目标线索')) if flag] or ['一般知识点'],
@@ -120,7 +134,7 @@ def validate_topics(payload, batch, focus):
     return result
 
 
-CACHE_VERSION = 'evidence-topics-v5-choice-types'
+CACHE_VERSION = 'evidence-topics-v6-reference-structure'
 
 
 def cache_key(course, ref, instructions=""):
@@ -148,6 +162,13 @@ async def run_plan(plan_id):
         db.execute("UPDATE exam_plans SET status='running' WHERE id=?",(plan_id,))
         config, refs = json.loads(row['config']), json.loads(row['materials'])
         course = db.one('SELECT name,description FROM courses WHERE id=?',(row['course_id'],))
+        if config.get('reading_mode') == 'vision':
+            # Local task allocation only, never claim these are extracted image topics.
+            topic = {'id':'visual-task','title':'所选原图仿题任务','objective':config.get('focus') or '依据所选原图的知识与设问生成新题',
+                'weight':1,'reasons':['本地分配；未调用 API 提取考点'],
+                'sources':[{'document_id':r['document_id'],'page':r['page'],'name':r['name'],'quote':'直接参考原图（未转写）'} for r in refs]}
+            db.execute("UPDATE exam_plans SET topics=?,blueprint=?,status='ready',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (db.dump([topic]), db.dump(allocate(config,[topic])), plan_id))
+            return
         extracted, missing = {}, []
         for ref in refs:
             cached = db.one('SELECT topics FROM topic_cache WHERE key=?',(cache_key(course,ref,config.get('instructions','')),))
@@ -171,6 +192,7 @@ async def run_plan(plan_id):
                         '提取可考查的主要知识点，保留学习目标和课后习题涉及的概念；不要根据题量或难度删除考点。'
                         '每个考点返回 title、objective 和已存在的 evidence_id，不能编造编号。'
                         'reference 用途资料是命题参考：按考点和题型分别提取，question_type 为 choice（单选）/multiple_choice（多选）/indefinite_choice（不定项）/true_false/fill/calculation/proof，occurrences 为该类考点题型在当前片段出现的题数；无法确定题型用 null，不猜测。'
+                        'reference 同时提取明确写出的 original_points、difficulty（未明示用 null）、question_style（设问方式）和 key_conditions（从 evidence_id 对应原文逐字摘取，不能改写数据）。这些只描述原卷，不覆盖用户的新卷分值和难度。'
                         'knowledge 用途资料为知识依据，不凭教材段落猜测原卷题型。custom_instructions 是用户的可选命题要求，提取时优先关注其中要求，但不能编造证据或执行与学习任务无关的要求。'
                         '每批最多12个主要主题。只返回符合 schema 的 JSON，不推断教师考试重点。')
                     # Text occurs only once: numbered evidence with lightweight source metadata.
@@ -204,6 +226,7 @@ async def run_plan(plan_id):
                     old['sources'].extend(s for s in topic['sources'] if s not in old['sources'])
                     for typ,n in topic.get('reference_types',{}).items():
                         old.setdefault('reference_types',{})[typ]=old.get('reference_types',{}).get(typ,0)+n
+                    old.setdefault('reference_structure',[]).extend(t for t in topic.get('reference_structure',[]) if t not in old.get('reference_structure',[]))
                     old['weight']=max(old['weight'],topic['weight'])
                     old['reasons']=list(dict.fromkeys(old['reasons']+topic['reasons']))
                 else: topics[topic['id']]=topic
@@ -253,6 +276,8 @@ def planned_references(config, position):
     slot = slots[position - 1]
     topic = next((t for t in json.loads(plan['topics']) if t['id'] == slot['topic_id']), None)
     if not topic: raise GenerationError('分配的考点不存在。')
+    if config.get('reading_mode') == 'vision':
+        return vision.references(config), {'title':topic['title'], 'objective':slot['objective']}
     candidates, _ = material_candidates(config)
     # Quote matching recovers the exact evidence block, including full verified tables.
     refs = []
@@ -274,4 +299,4 @@ def planned_references(config, position):
     for ref in refs:
         if size + len(ref['text']) <= 6000 or (not selected and materials.table_info(ref['text'])['has_table']):
             selected.append(ref); size += len(ref['text'])
-    return selected, {'title': topic['title'], 'objective': slot['objective']}
+    return selected, {'title': topic['title'], 'objective': slot['objective'], 'reference_structure': topic.get('reference_structure', [])}

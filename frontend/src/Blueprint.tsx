@@ -143,7 +143,7 @@ export const Blueprint = forwardRef<
       <div className="form-section-title">
         <span className="step-number">04</span>
         <div>
-          <h2>核对考点分配表</h2>
+          <h2>{config.reading_mode === 'vision' ? '核对看图仿题任务' : '核对考点分配表'}</h2>
           <p>
             先规划整卷，逐题调整后再生成。草稿自动保存；刷新后可继续。修改设置后可复用考点缓存更新分配。
           </p>
@@ -176,11 +176,18 @@ export const Blueprint = forwardRef<
           }
         }}
       >
-        {busy ? '正在创建规划…' : plan ? '重新生成分配表' : '生成考点分配表'}
+        {busy
+          ? '正在创建规划…'
+          : plan
+            ? '重新生成分配表'
+            : config.reading_mode === 'vision'
+              ? '生成仿题任务表（不调用 API）'
+              : '生成考点分配表'}
       </button>
       <p className="field-help">
-        规划会调用 API
-        并单独记录用量。优先参考你指定的重点、学习目标和课后习题；相同资料复用考点缓存；改变题量、分值或重点时不必重新读取未变化的内容。
+        {config.reading_mode === 'vision'
+          ? '本机按指定题型安排任务，不宣称已识别考点。可以逐题补充设问目标，生成时直接参考原图与自定义指令。'
+          : '规划会调用 API 并单独记录用量。优先参考指定重点、学习目标和课后习题；相同资料复用考点与命题结构缓存，改变题量、分值或重点无需重新读取未变化内容。'}
       </p>
       {running && (
         <>
@@ -356,6 +363,16 @@ export const Blueprint = forwardRef<
                     {t.title} · {count ? `已分配 ${count} 题` : '尚未覆盖'}
                   </strong>
                   <p>{t.reasons.join(' · ')}</p>
+                  {t.reference_structure?.map((r, i) => (
+                    <p key={i}>
+                      原卷结构：{r.question_type ? typeNames[r.question_type] : '题型未明确'} ·{' '}
+                      {r.occurrences} 题 · 原分值 {r.original_points ?? '未明确'} · 难度{' '}
+                      {r.difficulty || '未明确'}
+                      {r.question_style && ` · ${r.question_style}`}
+                      <br />
+                      关键条件：{r.key_conditions.join('；') || '未提取'}
+                    </p>
+                  ))}
                   {t.sources.map((s, i) => (
                     <p key={i}>
                       {s.name} · PDF 第 {s.page} 页：{s.quote}

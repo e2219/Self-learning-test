@@ -1,3 +1,4 @@
+import { UsageBreakdown, type UsageRow } from './Usage';
 import { useState } from 'react';
 import { api, json } from './api';
 import type { Page } from './types';
@@ -15,9 +16,12 @@ export function MaterialQuality({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [region, setRegion] = useState({ x: 0, y: 0, width: 100, height: 50 });
-  const [draft, setDraft] = useState<{ text: string; tokens: number; message: string } | null>(
-    null,
-  );
+  const [draft, setDraft] = useState<{
+    text: string;
+    tokens: number;
+    message: string;
+    usage?: UsageRow[];
+  } | null>(null);
   async function mark(confirmed: boolean) {
     setBusy(true);
     setError('');
@@ -139,6 +143,7 @@ export function MaterialQuality({
             <p>
               {draft.message} 本次 {draft.tokens} tokens。
             </p>
+            <UsageBreakdown rows={draft.usage} />
             <textarea aria-label="局部识别草稿" readOnly rows={10} value={draft.text} />
           </>
         )}

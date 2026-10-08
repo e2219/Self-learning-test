@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, usage, explanations
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .choice_answers import MULTI_TYPES, canonical
-from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput, BudgetInput
+from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput, BudgetInput, OCRBudgetInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf, text_quality_issue, save_image_as_pdf
 
 
@@ -260,12 +260,17 @@ def review_table(document_id: str, number: int, payload: TableReviewInput):
 async def recognize_region(document_id: str, number: int, payload: RegionInput):
     document_page(document_id, number)
     ensure_ocr_idle(document_id)
+    usage_token = ocr._usage_context.set(('document', document_id, f'ocr_region:{number}', 1))
+    force_token = ocr._force.set(True)
     try:
         image = await run_in_threadpool(ocr.render_page, db.DATA_DIR / "uploads" / f"{document_id}.pdf", number, payload.model_dump())
-        result, usage = await ocr.recognize_page(image)
+        result, tokens_used = await ocr.recognize_page(image)
     except ocr.OCRError as exc:
         raise HTTPException(422, f"{exc}（本次报告用量 {exc.tokens} tokens）") from exc
-    return {"text": result.text, "tokens": usage, "message": "局部识别草稿，未覆盖页面。请核对后手动合并到页面文本。"}
+    finally:
+        ocr._usage_context.reset(usage_token)
+        ocr._force.reset(force_token)
+    return {"usage": usage.summary('document', document_id), "text": result.text, "tokens": tokens_used, "message": "局部识别草稿，未覆盖页面。请核对后手动合并到页面文本。"}
 
 
 @api.delete("/documents/{document_id}")
@@ -311,11 +316,20 @@ async def start_ocr(document_id: str, payload: OCRInput, background: BackgroundT
         raise HTTPException(422, f"每次最多识别 {ocr.MAX_PAGES} 页，请分批选择。")
     if not security.api_key():
         raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
-    if ocr.is_busy():
-        raise HTTPException(409, "已有文字识别任务正在进行，请等待完成或停止后再开始。")
+    request_hash = drafts.digest({'document_id':document_id, **payload.model_dump(exclude={'submission_id'})})
     job_id = uuid.uuid4().hex
     with db.connection() as con:
-        con.execute("INSERT INTO ocr_jobs(id,document_id,start,end,force) VALUES (?,?,?,?,?)", (job_id, document_id, payload.start, payload.end, payload.force))
+        con.execute('BEGIN IMMEDIATE')
+        if payload.submission_id:
+            existing = con.execute('SELECT id,request_hash FROM ocr_jobs WHERE submission_id=?', (payload.submission_id,)).fetchone()
+            if existing:
+                if existing['request_hash'] != request_hash:
+                    raise HTTPException(409, '相同识别提交标识不能用于不同资料或设置。')
+                return ocr.detail(existing['id'])
+        if con.execute("SELECT 1 FROM ocr_jobs WHERE status IN ('queued','running','cancelling')").fetchone():
+            raise HTTPException(409, "已有文字识别任务正在进行，请等待完成或停止后再开始。")
+        con.execute("INSERT INTO ocr_jobs(id,document_id,start,end,force,token_budget,submission_id,request_hash) VALUES (?,?,?,?,?,?,?,?)",
+            (job_id, document_id, payload.start, payload.end, payload.force, payload.token_budget, payload.submission_id, request_hash))
         con.executemany("INSERT INTO ocr_job_pages(job_id,number) VALUES (?,?)", [(job_id, n) for n in range(payload.start, payload.end + 1)])
     background.add_task(ocr.run_job, job_id)
     return ocr.detail(job_id)
@@ -331,6 +345,15 @@ def get_ocr(job_id: str):
 async def cancel_ocr(job_id: str):
     required("ocr_jobs", job_id)
     db.execute("UPDATE ocr_jobs SET status='cancelling' WHERE id=? AND status IN ('queued','running')", (job_id,))
+    return ocr.detail(job_id)
+
+
+@api.put("/ocr/{job_id}/budget")
+def update_ocr_budget(job_id: str, payload: OCRBudgetInput):
+    job = required('ocr_jobs', job_id)
+    if job['status'] in ('queued','running','cancelling'):
+        raise HTTPException(409, '请先停止识别后修改预算。')
+    db.execute('UPDATE ocr_jobs SET token_budget=? WHERE id=?', (payload.token_budget, job_id))
     return ocr.detail(job_id)
 
 
@@ -362,6 +385,8 @@ def validate_ranges(payload):
 @api.post("/retrieval-preview")
 def retrieval_preview(payload: ExamInput):
     sources = validate_ranges(payload)
+    if payload.reading_mode == "vision":
+        return {"sources":sources, "excluded":[]}
     _, excluded = material_candidates(payload.model_dump())
     return {"sources": sources, "excluded": excluded}
 

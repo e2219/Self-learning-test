@@ -518,3 +518,55 @@ test('多选与不定项选择 → 点击切换 → 保存自动评分 → 恢�
   await expect(page.locator('.print-question')).toHaveCount(2);
   await expect(page.locator('.print-solution').first()).toContainText('AC');
 });
+
+test('看图仿题跳过 OCR → 本地任务表 → 刷新恢复 → 原图来源', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await page.getByLabel('访问口令').fill('browser-test-only');
+  await page.getByRole('button', { name: '开始学习', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '今天，也学得更扎实一点。' })).toBeVisible();
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '直接看图测试' } })
+  ).json();
+  const picture = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from PIL import Image; import sys; Image.new("RGB",(800,1000),"white").save(sys.stdout.buffer,format="PNG")',
+    ],
+    { cwd: '..' },
+  );
+  const doc = await (
+    await page.request.post(`/api/courses/${course.id}/documents`, {
+      multipart: { file: { name: '练习截图.png', mimeType: 'image/png', buffer: picture } },
+    })
+  ).json();
+  await page.goto(`/generate?course=${course.id}`);
+  await page.getByLabel('资料处理方式').selectOption('vision');
+  await page.locator('.scope-title input').check();
+  await expect(page.getByRole('button', { name: '识别所选页', exact: true })).toHaveCount(0);
+  await page.getByLabel('单选题数量', { exact: true }).fill('1');
+  await page.getByLabel('计算题数量', { exact: true }).fill('0');
+  await page.getByLabel('自定义命题指令（可选）').fill('保留截图考点，改变数值。');
+  await page.getByText('用量与答案设置', { exact: true }).click();
+  await page.getByLabel('审题策略').selectOption('adaptive');
+  await page.getByRole('button', { name: '生成仿题任务表（不调用 API）', exact: true }).click();
+  await expect(page.getByText(/本次规划累计 0 tokens/)).toBeVisible();
+  await expect(page.getByLabel('第 1 题设问目标')).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '继续上次规划', exact: true }).click();
+  await expect(page.getByLabel('资料处理方式')).toHaveValue('vision');
+  await expect(page.getByLabel('自定义命题指令（可选）')).toHaveValue('保留截图考点，改变数值。');
+  await page.getByRole('button', { name: '预览所选原图', exact: true }).click();
+  await expect(page.getByRole('dialog').locator('img')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: testInfo.outputPath('direct-vision-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: '确认分配并生成测验', exact: true }).click();
+  await expect(page).toHaveURL(/\/exams\//);
+  await expect(page.getByText('查看参考答案与解析').first()).toBeVisible();
+  expect((await (await page.request.get(`/api/documents/${doc.id}/pages/1`)).json()).text).toBe('');
+  expect(await (await page.request.get(`/api/documents/${doc.id}/ocr`)).json()).toBeNull();
+});

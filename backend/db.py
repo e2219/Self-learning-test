@@ -34,6 +34,10 @@ def init_db():
             input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, total_tokens INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_usage_owner ON usage_events(owner_type,owner_id);
+        CREATE TABLE IF NOT EXISTS ocr_cache (
+            key TEXT PRIMARY KEY, text TEXT NOT NULL, notes TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS courses (
@@ -125,6 +129,14 @@ def init_db():
             if name not in plan_columns:
                 con.execute(f"ALTER TABLE exam_plans ADD COLUMN {name} {spec}")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_submission ON exam_plans(submission_id) WHERE submission_id IS NOT NULL")
+        usage_columns = {r['name'] for r in con.execute('PRAGMA table_info(usage_events)')}
+        if 'reasoning_tokens' not in usage_columns:
+            con.execute('ALTER TABLE usage_events ADD COLUMN reasoning_tokens INTEGER')
+        job_columns = {r['name'] for r in con.execute('PRAGMA table_info(ocr_jobs)')}
+        for name, spec in (('token_budget', 'INTEGER NOT NULL DEFAULT 0'), ('submission_id', 'TEXT'), ('request_hash', "TEXT NOT NULL DEFAULT ''")):
+            if name not in job_columns:
+                con.execute(f'ALTER TABLE ocr_jobs ADD COLUMN {name} {spec}')
+        con.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ocr_submission ON ocr_jobs(submission_id) WHERE submission_id IS NOT NULL')
         ocr_columns = {r["name"] for r in con.execute("PRAGMA table_info(ocr_job_pages)")}
         if "stage" not in ocr_columns:
             con.execute("ALTER TABLE ocr_job_pages ADD COLUMN stage TEXT NOT NULL DEFAULT ''")

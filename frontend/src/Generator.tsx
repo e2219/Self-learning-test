@@ -48,6 +48,8 @@ export function Generator() {
     [ranges, setRanges] = useState<SourceRange[]>([]);
   const [title, setTitle] = useState(''),
     [mode, setMode] = useState('custom'),
+    [readingMode, setReadingMode] = useState<'study' | 'vision'>('study'),
+    [reviewMode, setReviewMode] = useState<'full' | 'adaptive'>('full'),
     [rules, setRules] = useState(initialRules),
     [randomCount, setRandomCount] = useState(10),
     [difficulty, setDifficulty] = useState('基础巩固'),
@@ -63,7 +65,9 @@ export function Generator() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [docsLoading, setDocsLoading] = useState(false),
-    [preview, setPreview] = useState<{ name: string; page: number; text: string }[] | null>(null),
+    [preview, setPreview] = useState<
+      { name: string; document_id: string; page: number; text: string; visual?: boolean }[] | null
+    >(null),
     [previewBusy, setPreviewBusy] = useState(false),
     [ocrScope, setOcrScope] = useState<{ doc: Document; start: number; end: number } | null>(null);
   useEffect(() => {
@@ -111,6 +115,8 @@ export function Generator() {
       ranges,
       rules: mode === 'custom' ? rules : allowed,
       mode,
+      reading_mode: readingMode,
+      review_mode: reviewMode,
       random_count: randomCount,
       difficulty,
       focus,
@@ -129,6 +135,8 @@ export function Generator() {
     setTitle(c.title);
     setRanges(c.ranges);
     setMode(c.mode);
+    setReadingMode(c.reading_mode || 'study');
+    setReviewMode(c.review_mode || 'full');
     setRandomCount(c.random_count);
     setRules(initialRules.map((r) => c.rules.find((s) => s.type === r.type) || { ...r, count: 0 }));
     setDifficulty(c.difficulty);
@@ -166,7 +174,13 @@ export function Generator() {
   function updateRange(id: string, patch: Partial<SourceRange>) {
     setRanges((prev) => prev.map((r) => (r.document_id === id ? { ...r, ...patch } : r)));
   }
-  const valid = courseId && ranges.length > 0 && count > 0 && count <= 30 && allowed.length > 0;
+  const valid =
+    courseId &&
+    ranges.length > 0 &&
+    count > 0 &&
+    count <= 30 &&
+    allowed.length > 0 &&
+    (readingMode !== 'vision' || selectedPages <= 4);
   return (
     <>
       <Link className="back-link" to={courseId ? `/courses/${courseId}` : '/courses'}>
@@ -339,7 +353,36 @@ export function Generator() {
                   />
                 </label>
               </div>
-              <label className="field-title">教材与 PDF 页码范围</label>
+              <label>
+                资料处理方式
+                <select
+                  value={readingMode}
+                  onChange={(e) => {
+                    const value = e.target.value as 'study' | 'vision';
+                    setReadingMode(value);
+                    if (value === 'vision') {
+                      if (mode === 'reference') setMode('custom');
+                      setBatchGeneration(false);
+                    }
+                  }}
+                >
+                  <option value="study">资料学习 · 识别并缓存，适合反复复习</option>
+                  <option value="vision">看图仿题 · 直接读取原图，适合少量习题截图</option>
+                </select>
+              </label>
+              {readingMode === 'vision' && (
+                <Notice>
+                  直接读取所选图片或 PDF 页面，无需先识别文字。每次最多 4
+                  页；分配表在本机生成，不提取考点、不调用 API。出题与审题使用 DeepSeek
+                  Flash，可能多次读取原图，反复使用同一资料时不一定更省。
+                </Notice>
+              )}
+              {readingMode === 'vision' && selectedPages > 4 && (
+                <Notice tone="error">
+                  当前选择 {selectedPages} 页，看图仿题最多 4 页，请缩小范围。
+                </Notice>
+              )}
+              <label className="field-title">教材、图片与 PDF 页码范围</label>
               {docsLoading ? (
                 <Loading label="正在读取教材…" />
               ) : docs.length === 0 ? (
@@ -382,7 +425,7 @@ export function Generator() {
                           </small>
                         </span>
                       </label>
-                      {scope && (
+                      {scope && readingMode === 'study' && (
                         <div className="ocr-scope-action">
                           <span>
                             {doc.usable_pages === 0
@@ -508,6 +551,7 @@ export function Generator() {
                 </button>
                 <button
                   type="button"
+                  disabled={readingMode === 'vision'}
                   className={mode === 'reference' ? 'selected' : ''}
                   onClick={() => {
                     setMode('reference');
@@ -644,11 +688,25 @@ export function Generator() {
                 <label>
                   <input
                     type="checkbox"
+                    disabled={readingMode === 'vision'}
                     checked={batchGeneration}
                     onChange={(e) => setBatchGeneration(e.target.checked)}
                   />
                   尝试合并两道共用相同依据的题目（逐题独立审查，复杂题建议关闭）
                 </label>
+                <label>
+                  审题策略
+                  <select
+                    value={reviewMode}
+                    onChange={(e) => setReviewMode(e.target.value as 'full' | 'adaptive')}
+                  >
+                    <option value="full">完整审题（独立解题＋答案一致性核验）</option>
+                    <option value="adaptive">按风险审题（简单纯文字单选、判断题合并审查）</option>
+                  </select>
+                </label>
+                <p className="field-help">
+                  合并审查会同时看到答案，不能视为独立盲审；图片、表格、多选、不定项、填空、计算和证明题仍完整审题。表格、无法辨认或未转写图形会对照原图复核，另计图片输入用量。
+                </p>
                 <label>
                   每题最多尝试次数（含首次）
                   <input
@@ -694,7 +752,8 @@ export function Generator() {
                 </select>
               </label>
               <p className="field-help">
-                每题会独立审题并核对答案解析，会增加 API 用量。AI 审题不能替代人工核对。
+                按所选策略核对题目与答案解析，会增加 API 用量；表格或识别存疑时对照原图。AI
+                审题仍可能漏错。
               </p>
               <label className="duration-field">
                 建议用时（分钟）
@@ -782,7 +841,13 @@ export function Generator() {
                   setError('');
                   try {
                     const data = await api<{
-                      sources: { name: string; page: number; text: string }[];
+                      sources: {
+                        name: string;
+                        document_id: string;
+                        page: number;
+                        text: string;
+                        visual?: boolean;
+                      }[];
                     }>('/retrieval-preview', json('POST', payload()));
                     setPreview(data.sources);
                   } catch (err) {
@@ -793,7 +858,11 @@ export function Generator() {
                 }}
               >
                 <Eye size={16} />
-                {previewBusy ? '正在读取…' : '预览检索片段'}
+                {previewBusy
+                  ? '正在读取…'
+                  : readingMode === 'vision'
+                    ? '预览所选原图'
+                    : '预览检索片段'}
               </button>
               <p className="summary-note">
                 生成将调用 DeepSeek
@@ -810,14 +879,24 @@ export function Generator() {
       {preview && (
         <Modal title="检索片段预览" close={() => setPreview(null)}>
           <Notice>
-            下面是一次检索示例。生成每道题时会在同一范围内选择相关片段；不会保证覆盖全部选中页面。
+            {readingMode === 'vision'
+              ? '以下原图会用于出题与审题，未进行全文转写。'
+              : '下面是一次检索示例。生成每道题时会在同一范围内选择相关片段；不会保证覆盖全部选中页面。'}
           </Notice>
           {preview.map((s, i) => (
             <div className="retrieval-snippet" key={i}>
               <strong>
                 {s.name} · PDF 第 {s.page} 页
               </strong>
-              <pre>{s.text}</pre>
+              {s.visual ? (
+                <img
+                  className="source-preview-image"
+                  src={`/api/documents/${s.document_id}/pages/${s.page}/image`}
+                  alt={`${s.name} 第 ${s.page} 页`}
+                />
+              ) : (
+                <pre>{s.text}</pre>
+              )}
             </div>
           ))}
         </Modal>

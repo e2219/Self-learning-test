@@ -63,8 +63,11 @@ deepseek.check_connection = mock_connection
 # Blueprint extraction is deterministic here; production uses source-grounded API extraction.
 from backend import planning, db
 import json
+real_run_plan = planning.run_plan
 async def mock_plan(plan_id):
     row = db.one("SELECT * FROM exam_plans WHERE id=?", (plan_id,))
+    if json.loads(row['config']).get('reading_mode') == 'vision':
+        return await real_run_plan(plan_id)
     refs = json.loads(row['materials'])
     ref = refs[0]
     topics = [{'id': 'topic1', 'title': '事件独立性', 'objective': '根据独立性计算概率', 'weight': 1, 'reference_types': {'choice':3,'calculation':1} if json.loads(row['config']).get('mode')=='reference' else {}, 'reasons': ['测试主题'],

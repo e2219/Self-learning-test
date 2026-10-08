@@ -505,7 +505,9 @@ export function QuestionCard({
       {complete && (
         <small className="muted">
           {q.review?.status === 'passed'
-            ? '已通过 AI 独立审题，仍建议人工核对'
+            ? q.review?.method === 'combined'
+              ? '已通过 AI 单次合并审题（非独立盲审），仍建议核对'
+              : `已通过 AI 独立审题${q.review?.source_images_checked ? '及原图复核' : ''}，仍建议人工核对`
             : '此题尚无独立审题记录'}
         </small>
       )}

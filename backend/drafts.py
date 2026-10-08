@@ -46,8 +46,8 @@ def changes(row):
 
 
 def settings_changed(original, current):
-    original={**original,'rules':sorted((r for r in original['rules'] if r['count']>0),key=lambda r:r['type'])}
-    current={**current,'rules':sorted((r for r in current['rules'] if r['count']>0),key=lambda r:r['type'])}
+    original={'reading_mode':'study','review_mode':'full',**original,'rules':sorted((r for r in original['rules'] if r['count']>0),key=lambda r:r['type'])}
+    current={'reading_mode':'study','review_mode':'full',**current,'rules':sorted((r for r in current['rules'] if r['count']>0),key=lambda r:r['type'])}
     ignore={'title','duration','token_budget','max_attempts','batch_generation'}
     return {k:v for k,v in clean_config(original).items() if k not in ignore} != {k:v for k,v in clean_config(current).items() if k not in ignore}
 

@@ -56,7 +56,12 @@ export type Question = {
   status: string;
   stem: string;
   blanks?: { answer: string; alternatives: string[] }[];
-  review?: { status?: string; expanded_explanation?: boolean };
+  review?: {
+    status?: string;
+    method?: string;
+    source_images_checked?: boolean;
+    expanded_explanation?: boolean;
+  };
   options: string[];
   answer: string;
   explanation: string;
@@ -82,6 +87,8 @@ export type ExamConfig = {
   title: string;
   ranges: SourceRange[];
   rules: { type: QuestionType; count: number; points: number }[];
+  reading_mode?: 'study' | 'vision';
+  review_mode?: 'full' | 'adaptive';
   mode: string;
   random_count: number;
   difficulty: string;
@@ -147,6 +154,14 @@ export type ExamPlan = {
     title: string;
     objective: string;
     reasons: string[];
+    reference_structure?: {
+      question_type: QuestionType | null;
+      occurrences: number;
+      original_points: number | null;
+      difficulty: string | null;
+      question_style: string;
+      key_conditions: string[];
+    }[];
     sources: { name: string; page: number; quote: string }[];
   }[];
   blueprint: PlanSlot[];

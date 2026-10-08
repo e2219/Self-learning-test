@@ -3761,3 +3761,10 @@ textarea::placeholder {
 .exam-admin > form .field-help {
   margin-top: 8px;
 }
+
+.source-preview-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 12px auto;
+}

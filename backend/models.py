@@ -55,6 +55,8 @@ class ExamInput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     ranges: list[SourceRange] = Field(min_length=1, max_length=10)
     rules: list[TypeRule] = Field(min_length=1, max_length=7)
+    reading_mode: Literal["study", "vision"] = "study"
+    review_mode: Literal["full", "adaptive"] = "full"
     mode: Literal["custom", "random", "reference"] = "custom"
     random_count: int = Field(default=10, ge=1, le=30)
     difficulty: Literal["基础巩固", "综合应用", "挑战题"] = "基础巩固"
@@ -73,6 +75,13 @@ class ExamInput(BaseModel):
 
     @model_validator(mode="after")
     def valid_counts(self):
+        if self.reading_mode == "vision":
+            if sum(r.end - r.start + 1 for r in self.ranges) > 4:
+                raise ValueError("看图仿题每次最多 4 页；整章资料请使用资料学习模式")
+            if self.mode == "reference":
+                raise ValueError("看图仿题请指定题型和数量，通过自定义指令说明仿题要求；自动还原题型比例请用资料学习模式")
+            if self.batch_generation:
+                raise ValueError("看图仿题暂不支持合并两题生成")
         if len({r.type for r in self.rules}) != len(self.rules):
             raise ValueError("题型不能重复")
         if self.mode == "custom" and not 1 <= sum(r.count for r in self.rules) <= 30:
@@ -114,10 +123,15 @@ class ProgressInput(BaseModel):
     is_favorite: bool | None = None
 
 
-class OCRInput(BaseModel):
+class OCRBudgetInput(BaseModel):
+    token_budget: int = Field(default=0, ge=0, le=10_000_000)
+
+
+class OCRInput(OCRBudgetInput):
     start: int = Field(ge=1)
     end: int = Field(ge=1)
     force: bool = False
+    submission_id: str | None = Field(default=None, min_length=8, max_length=100)
 
 
 class TableReviewInput(BaseModel):

@@ -1,5 +1,7 @@
+import { UsageBreakdown, type UsageRow } from './Usage';
+import { newSubmissionId } from './draft';
 import { MaterialQuality } from './MaterialQuality';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, json, useRemote } from './api';
 import type { Document, Page, Settings } from './types';
@@ -11,6 +13,8 @@ type Job = {
   end: number;
   status: string;
   tokens: number;
+  token_budget: number;
+  usage?: UsageRow[];
   pages: {
     number: number;
     status: string;
@@ -55,6 +59,9 @@ export function DocumentOCR({
 }) {
   const [from, setFrom] = useState(start),
     [to, setTo] = useState(end ?? Math.min(start + 4, doc.page_count));
+  const actionLock = useRef(false);
+  const submission = useRef<{ signature: string; id: string } | null>(null);
+  const [budget, setBudget] = useState(0);
   const [force, setForce] = useState(false),
     [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false),
@@ -73,7 +80,10 @@ export function DocumentOCR({
     let live = true;
     api<Job | null>(`/documents/${doc.id}/ocr`)
       .then((j) => {
-        if (live) setJob(j);
+        if (live) {
+          setJob(j);
+          setBudget(j?.token_budget || 0);
+        }
       })
       .catch((e) => {
         if (live) setError(e.message);
@@ -107,17 +117,30 @@ export function DocumentOCR({
     };
   }, [job, page.reload]);
   async function act(path: string, body?: object) {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setBusy(true);
     setError('');
     setSaved('');
     try {
+      if (path.endsWith('/retry') && job) {
+        await api(`/ocr/${job.id}/budget`, json('PUT', { token_budget: budget }));
+      }
+      if (path === `/documents/${doc.id}/ocr`) {
+        const signature = JSON.stringify({ ...body, token_budget: budget });
+        if (submission.current?.signature !== signature)
+          submission.current = { signature, id: newSubmissionId() };
+        body = { ...body, token_budget: budget, submission_id: submission.current.id };
+      }
       setJob(await api<Job>(path, json('POST', body)));
+      submission.current = null;
       setListOffset(0);
       await page.reload();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+      actionLock.current = false;
     }
   }
   function selectPage(value: number) {
@@ -206,6 +229,21 @@ export function DocumentOCR({
         />
         重新识别已有文字的页面（再次计费，不覆盖手动修正）
       </label>
+      <label>
+        识别 token 预算阈值（0 为不限）
+        <input
+          type="number"
+          min={0}
+          max={10000000}
+          step={1000}
+          value={budget}
+          disabled={running(job) || busy}
+          onChange={(e) => setBudget(Number(e.target.value))}
+        />
+      </label>
+      <p className="field-help">
+        默认关闭识别思考，保留精细图片。达到已报告用量阈值后停止后续页面，当前请求可能超出；调整预算后可重试未完成页。相同图片复用缓存，勾选重新识别会跳过缓存。
+      </p>
       {to - from + 1 > max && <Notice tone="error">范围超过 {max} 页，请分批选择。</Notice>}
       {(error || settings.error) && <Notice tone="error">{error || settings.error}</Notice>}
       {job && (
@@ -239,6 +277,7 @@ export function DocumentOCR({
             )}
             <span className="muted">本任务累计 {job.tokens.toLocaleString()} tokens</span>
           </div>
+          <UsageBreakdown rows={job.usage} />
           {job.tokens === 0 && (
             <p className="field-help">
               0 tokens 表示尚未记录到接口用量，不等于确认未调用或未计费。请查看每页的调用阶段。
