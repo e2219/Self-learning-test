@@ -75,13 +75,3 @@ async def mock_plan(plan_id):
     slots = planning.allocate(json.loads(row['config']), topics)
     db.execute("UPDATE exam_plans SET status='ready',topics=?,blueprint=?,tokens=50 WHERE id=?", (db.dump(topics),db.dump(slots),plan_id))
 planning.run_plan = mock_plan
-
-# Public-resource responses are also offline fixtures. No network or paid generation in E2E.
-from backend import web_resources
-async def mock_resource_request(site, params):
-    if params.get('list') == 'search':
-        return {'query': {'search': [{'pageid': 7, 'title': '开放概率练习', 'snippet': '独立事件概率练习'}]}}
-    if params['action'] == 'parse':
-        return {'parse': {'text': '<p>求两个独立事件同时发生的概率。</p><p>答案：概率相乘。</p>'}}
-    return {'query': {'rightsinfo': {'url': 'https://creativecommons.org/licenses/by-sa/4.0/deed.zh'}, 'pages': [{'ns': 0, 'title': '开放概率练习', 'revisions': [{'revid': 123, 'slots': {'main': {'content': '独立事件练习'}}}]}]}}
-web_resources.request = mock_resource_request

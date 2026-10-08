@@ -2844,7 +2844,7 @@ textarea::placeholder {
   }
   .sidebar nav {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 0;
     height: 100%;
   }
@@ -3795,14 +3795,6 @@ textarea::placeholder {
   border-top: 1px solid var(--line);
 }
 
-.resource-result {
-  padding: 20px 0;
-  border-bottom: 1px solid var(--border, #e0e7d8);
-}
-.source-excerpt {
-  white-space: pre-wrap;
-  line-height: 1.65;
-}
 .external-attribution {
   font-size: 12px;
   overflow-wrap: anywhere;

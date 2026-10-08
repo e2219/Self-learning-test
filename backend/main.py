@@ -6,13 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import Query, APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import providers, web_resources
+from . import providers
 from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, usage, explanations
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .choice_answers import MULTI_TYPES, canonical
@@ -166,22 +166,6 @@ async def test_provider(role: providers.Role):
         return await deepseek.check_provider(role)
     except deepseek.ClientSetupError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-@api.get('/web-resources/search')
-async def search_web_resources(q: str = Query(min_length=1, max_length=150), site: web_resources.Site = 'zh'):
-    if not q.strip(): raise HTTPException(422, '请输入检索关键词。')
-    return await web_resources.search(site, q.strip())
-
-
-@api.get('/web-resources/preview')
-async def preview_web_resource(page_id: int = Query(gt=0), site: web_resources.Site = 'zh'):
-    return await web_resources.preview(site, page_id)
-
-
-@api.post('/web-resources/import', status_code=201)
-def import_web_question(payload: web_resources.ImportInput):
-    return exam_detail(web_resources.import_question(payload))
 
 
 @api.get("/courses")

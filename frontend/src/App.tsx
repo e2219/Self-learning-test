@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import {
   ArrowRight,
   BookOpen,
@@ -21,7 +21,6 @@ import { Loading, Notice } from './ui';
 import { Courses, Dashboard, CoursePage } from './Courses';
 import { Generator } from './Generator';
 import { ExamPage, Exams, PrintPage, Review } from './Exams';
-import { WebResources } from './WebResources';
 import { SettingsPage } from './Settings';
 
 function Login({ onLogin }: { onLogin: () => void }) {
@@ -129,7 +128,6 @@ const nav = [
   { to: '/courses', label: '我的课程', icon: BookOpen },
   { to: '/exams', label: '历史试卷', icon: FileText },
   { to: '/review', label: '错题与收藏', icon: NotebookPen },
-  { to: '/resources', label: '资源检索', icon: BookOpen },
   { to: '/settings', label: '应用设置', icon: Settings2 },
 ];
 
@@ -245,7 +243,7 @@ export default function App() {
         <main className="main">
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/resources" element={<WebResources />} />
+            <Route path="/resources" element={<Navigate to="/exams" replace />} />
             <Route path="/courses" element={<Courses />} />
             <Route path="/courses/:courseId" element={<CoursePage />} />
             <Route path="/generate" element={<Generator />} />
