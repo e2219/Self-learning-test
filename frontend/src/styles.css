@@ -2844,7 +2844,7 @@ textarea::placeholder {
   }
   .sidebar nav {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 0;
     height: 100%;
   }
@@ -3793,4 +3793,22 @@ textarea::placeholder {
   gap: 8px;
   padding: 10px 0 14px;
   border-top: 1px solid var(--line);
+}
+
+.resource-result {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border, #e0e7d8);
+}
+.source-excerpt {
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+.external-attribution {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: #65796e;
+  margin: 16px 0;
+}
+.settings-layout > div > .panel + .panel {
+  margin-top: 24px;
 }

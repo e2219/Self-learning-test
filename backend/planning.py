@@ -7,7 +7,7 @@ from collections import Counter
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from . import db, deepseek, materials, drafts, usage, vision
+from . import db, deepseek, providers, materials, drafts, usage, vision
 from .generation import material_candidates, plan_questions, tokens, GenerationError, reported_usage
 from .models import ExamInput, QuestionType
 
@@ -138,7 +138,7 @@ CACHE_VERSION = 'evidence-topics-v6-reference-structure'
 
 
 def cache_key(course, ref, instructions=""):
-    return drafts.digest({'version':CACHE_VERSION,'model':db.setting('model','deepseek-chat'),
+    return drafts.digest({'version':CACHE_VERSION,'provider':providers.identity(),
         'course':course,'text':ref['text'],'kind':ref['kind'],'role':ref.get('role'), 'instructions':instructions})
 
 
@@ -199,8 +199,7 @@ async def run_plan(plan_id):
                     request = {'course':course,'custom_instructions':config.get('instructions',''),'sources':[{'id':r['id'],'kind':r['kind'],'role':r.get('role'),'page':r['page']} for r in batch],
                         'evidence':[{'id':k,'text':v[1]} for k,v in evidence_catalog(batch).items()],
                         'schema':usage.compact_schema(TopicResponse.model_json_schema())}
-                    response = await client.post('https://api.deepseek.com/chat/completions',headers={'Authorization':f'Bearer {key}'},
-                        json={'model':db.setting('model','deepseek-chat'),'response_format':{'type':'json_object'},'max_tokens':8192,
+                    response = await providers.complete(client, {'response_format':{'type':'json_object'},'max_tokens':8192,
                             'messages':[{'role':'system','content':system},{'role':'user','content':usage.dumps(request)}]})
                     if response.status_code != 200: raise GenerationError(f'规划请求失败（HTTP {response.status_code}），请检查密钥、余额或网络。')
                     data=response.json()

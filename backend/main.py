@@ -6,11 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Query, APIRouter, BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from . import providers, web_resources
 from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, usage, explanations
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .choice_answers import MULTI_TYPES, canonical
@@ -26,6 +28,15 @@ async def lifespan(app):
 
 
 app = FastAPI(title="知习 · AI 学习助手", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith('/api/settings'):
+        # Pydantic's default errors include input (potentially the entire API key).
+        return JSONResponse({'detail': '接口设置格式无效，请检查地址、模型 ID 和密钥格式。'}, status_code=422)
+    from fastapi.exception_handlers import request_validation_exception_handler
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.middleware("http")
@@ -108,9 +119,10 @@ def logout(request: Request, response: Response):
 
 @api.get("/settings")
 def settings():
-    return {"has_key": bool(security.api_key()), "key_from_env": bool(os.environ.get("DEEPSEEK_API_KEY")),
+    return {"deepseek_has_key": bool(security.api_key()), "has_key": providers.has_key(), "has_vision_key": providers.has_key("vision"),
+        "providers": {role: providers.public(role) for role in ("text", "vision")}, "key_from_env": bool(os.environ.get("DEEPSEEK_API_KEY")),
         "model": db.setting("model", "deepseek-chat"),
-        "ocr_model": ocr.MODEL, "ocr_max_pages": ocr.MAX_PAGES,
+        "ocr_model": providers.config("vision")["model"], "ocr_max_pages": ocr.MAX_PAGES,
         "max_pdf_bytes": limits.MAX_PDF_BYTES, "max_pdf_pages": limits.MAX_PDF_PAGES}
 
 
@@ -124,12 +136,52 @@ async def test_connection():
 
 @api.put("/settings")
 def update_settings(payload: SettingsInput):
+    ensure_provider_idle()
     if payload.clear_key:
         db.set_setting("api_key", "")
     elif payload.api_key.strip():
         db.set_setting("api_key", payload.api_key.strip())
     db.set_setting("model", payload.model)
     return settings()
+
+
+def ensure_provider_idle():
+    if active_exams or planning.active_plans or ocr.active_jobs or any((
+        db.one("SELECT 1 FROM exams WHERE status IN ('queued','generating')"),
+        db.one("SELECT 1 FROM exam_plans WHERE status IN ('queued','running')"),
+        db.one("SELECT 1 FROM ocr_jobs WHERE status IN ('queued','running')"),
+    )):
+        raise HTTPException(409, '有 AI 任务正在执行，请等待完成或停止任务后再修改接口。')
+
+
+@api.put('/settings/providers/{role}')
+def save_provider(role: providers.Role, payload: providers.ProviderInput):
+    ensure_provider_idle()
+    return providers.save(role, payload)
+
+
+@api.post('/settings/providers/{role}/test')
+async def test_provider(role: providers.Role):
+    try:
+        return await deepseek.check_provider(role)
+    except deepseek.ClientSetupError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@api.get('/web-resources/search')
+async def search_web_resources(q: str = Query(min_length=1, max_length=150), site: web_resources.Site = 'zh'):
+    if not q.strip(): raise HTTPException(422, '请输入检索关键词。')
+    return await web_resources.search(site, q.strip())
+
+
+@api.get('/web-resources/preview')
+async def preview_web_resource(page_id: int = Query(gt=0), site: web_resources.Site = 'zh'):
+    return await web_resources.preview(site, page_id)
+
+
+@api.post('/web-resources/import', status_code=201)
+def import_web_question(payload: web_resources.ImportInput):
+    return exam_detail(web_resources.import_question(payload))
 
 
 @api.get("/courses")
@@ -317,8 +369,8 @@ async def start_ocr(document_id: str, payload: OCRInput, background: BackgroundT
         raise HTTPException(422, "OCR 页码范围无效，请使用 PDF 实际页码。")
     if payload.end - payload.start + 1 > ocr.MAX_PAGES:
         raise HTTPException(422, f"每次最多识别 {ocr.MAX_PAGES} 页，请分批选择。")
-    if not security.api_key():
-        raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
+    if not providers.has_key("vision"):
+        raise HTTPException(422, "请先在设置中配置 AI API Key。")
     request_hash = drafts.digest({'document_id':document_id, **payload.model_dump(exclude={'submission_id'})})
     job_id = uuid.uuid4().hex
     with db.connection() as con:
@@ -365,8 +417,8 @@ async def retry_ocr(job_id: str, background: BackgroundTasks):
     required("ocr_jobs", job_id)
     if ocr.is_busy() or job_id in ocr.active_jobs:
         raise HTTPException(409, "已有文字识别任务正在进行，请稍后重试。")
-    if not security.api_key():
-        raise HTTPException(422, "请先在设置中配置 DeepSeek API Key。")
+    if not providers.has_key("vision"):
+        raise HTTPException(422, "请先在设置中配置 AI API Key。")
     db.execute("UPDATE ocr_job_pages SET status='pending',error='' WHERE job_id=? AND status NOT IN ('ready','skipped')", (job_id,))
     db.execute("UPDATE ocr_jobs SET status='queued' WHERE id=?", (job_id,))
     background.add_task(ocr.run_job, job_id)
@@ -480,7 +532,7 @@ async def create_exam(payload: ExamInput, background: BackgroundTasks):
                     raise HTTPException(410,'原试卷已删除；不会重复创建，请新建规划。')
                 return exam_detail(existing['exam_id'])
         validate_ranges(payload)
-        if not security.api_key(): raise HTTPException(422,'请先在设置中配置 DeepSeek API Key。')
+        if not providers.has_key('vision' if payload.reading_mode == 'vision' else 'text'): raise HTTPException(422,'请先在设置中配置 AI API Key。')
         try: planning.validate_blueprint(payload)
         except GenerationError as exc: raise HTTPException(422,str(exc)) from exc
         if con.execute("SELECT 1 FROM exams WHERE status IN ('queued','generating')").fetchone():
@@ -528,8 +580,10 @@ def update_budget(exam_id: str, payload: BudgetInput):
 async def expand_explanation(question_id: str):
     question = required('questions',question_id)
     exam = ensure_idle(question['exam_id'])
+    if json.loads(exam['config']).get('origin') == 'web_import':
+        raise HTTPException(422, '来源摘录题不支持重新生成或 AI 详解；可手动编辑修订。')
     if question['status'] != 'ready': raise HTTPException(409,'请先完成题目生成。')
-    if not security.api_key(): raise HTTPException(422,'请先配置 DeepSeek API Key。')
+    if not providers.has_key('vision' if json.loads(exam['config']).get('reading_mode') == 'vision' else 'text'): raise HTTPException(422,'请先配置 AI API Key。')
     active_exams.add(exam['id'])
     try:
         await explanations.expand(question,exam)
@@ -545,8 +599,10 @@ async def expand_explanation(question_id: str):
 @api.post("/exams/{exam_id}/retry")
 async def retry_exam(exam_id: str, background: BackgroundTasks):
     exam = ensure_idle(exam_id)
-    if not security.api_key():
-        raise HTTPException(422, "请先配置 DeepSeek API Key。")
+    if not providers.has_key("vision" if json.loads(exam["config"]).get("reading_mode") == "vision" else "text"):
+        raise HTTPException(422, "请先配置 AI API Key。")
+    if json.loads(exam['config']).get('origin') == 'web_import':
+        raise HTTPException(422, '来源摘录题不支持重新生成或 AI 详解；可手动编辑修订。')
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
     config=json.loads(exam['config'])
     if config.get('token_budget') and exam['tokens'] >= config['token_budget']:
@@ -571,8 +627,10 @@ def delete_exam(exam_id: str):
 async def regenerate(question_id: str, background: BackgroundTasks):
     question = required("questions", question_id)
     exam = ensure_idle(question["exam_id"])
-    if not security.api_key():
-        raise HTTPException(422, "请先配置 DeepSeek API Key。")
+    if not providers.has_key("vision" if json.loads(exam["config"]).get("reading_mode") == "vision" else "text"):
+        raise HTTPException(422, "请先配置 AI API Key。")
+    if json.loads(exam['config']).get('origin') == 'web_import':
+        raise HTTPException(422, '来源摘录题不支持重新生成或 AI 详解；可手动编辑修订。')
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
     db.execute("UPDATE questions SET candidate='',status='pending',error='' WHERE id=?", (question_id,))
     db.execute("UPDATE exams SET status='queued',error='' WHERE id=?", (question["exam_id"],))
@@ -590,7 +648,7 @@ def edit_question(question_id: str, payload: QuestionEdit):
     question = required("questions", question_id)
     exam = ensure_idle(question["exam_id"])
     config = json.loads(exam["config"])
-    refs = []
+    refs = json.loads(question["sources"]) if config.get("origin") == "web_import" else []
     for scope in config["ranges"]:
         doc = required("documents", scope["document_id"])
         refs.extend({"document_id": doc["id"], "page": n, "name": doc["name"]} for n in range(scope["start"], scope["end"]+1))
@@ -600,6 +658,9 @@ def edit_question(question_id: str, payload: QuestionEdit):
         raise HTTPException(422, str(exc)) from exc
     names = {(r["document_id"], r["page"]): r["name"] for r in refs}
     sources = [{**s.model_dump(), "name": names[(s.document_id, s.page)]} for s in payload.sources]
+    if config.get('origin') == 'web_import':
+        # Attribution is immutable through the manual question editor.
+        sources = [{**s, 'modified': True} for s in json.loads(question['sources'])]
     db.execute("""UPDATE questions SET candidate='',stem=?,options=?,answer=?,explanation=?,rubric=?,knowledge=?,sources=?,blanks=?,review='{}',points=?,status='ready',error='',self_score=NULL,is_wrong=0 WHERE id=?""",
         (payload.stem, db.dump(payload.options), checked.answer, payload.explanation, db.dump(payload.rubric), payload.knowledge, db.dump(sources), db.dump([b.model_dump() for b in checked.blanks]), payload.points, question_id))
     refresh_exam(question["exam_id"])

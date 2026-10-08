@@ -38,6 +38,7 @@ def init_db():
             key TEXT PRIMARY KEY, text TEXT NOT NULL, notes TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
         );
+        CREATE TABLE IF NOT EXISTS web_sources (id TEXT PRIMARY KEY, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS courses (

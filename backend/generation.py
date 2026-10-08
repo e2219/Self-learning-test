@@ -6,7 +6,7 @@ import re
 import httpx
 from pydantic import ValidationError
 
-from . import db, deepseek, quality, materials, vision
+from . import db, deepseek, providers, quality, materials, vision
 from . import usage as meter
 from .choice_answers import CHOICE_TYPES, MULTI_TYPES, canonical
 from .models import ExamInput, GeneratedQuestion
@@ -186,14 +186,14 @@ def validate_content(content, question_type, references, previous):
 
 def decode_question_response(data, question_type, references, previous):
     if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
-        raise GenerationError("DeepSeek 没有返回题目（QUESTION_RESPONSE），请稍后重试。")
+        raise GenerationError("AI 服务没有返回题目（QUESTION_RESPONSE），请稍后重试。")
     choice = data["choices"][0]
     if not isinstance(choice, dict):
-        raise GenerationError("DeepSeek 题目响应结构异常（QUESTION_RESPONSE），请稍后重试。")
+        raise GenerationError("AI 服务题目响应结构异常（QUESTION_RESPONSE），请稍后重试。")
     if choice.get("finish_reason") == "length":
         raise OutputValidationError("题目输出被截断，请缩短题干和解析，并完整返回全部字段。", code="QUESTION_TRUNCATED")
     if choice.get("finish_reason") != "stop":
-        raise GenerationError("DeepSeek 未完整返回题目（QUESTION_INCOMPLETE），请稍后重试。")
+        raise GenerationError("AI 服务未完整返回题目（QUESTION_INCOMPLETE），请稍后重试。")
     message = choice.get("message")
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
@@ -298,7 +298,7 @@ async def generate_one(question, config, references, previous):
     total_usage = 0
     angle_offset = question.get("position", 1) + random.randrange(len(ANGLES))
     try:
-        key = deepseek.api_key()
+        key = deepseek.api_key("vision" if direct else "text")
         async with deepseek.create_client(timeout=httpx.Timeout(180, connect=15), follow_redirects=False) as client:
             async def request_model(messages):
                 nonlocal total_usage
@@ -316,18 +316,16 @@ async def generate_one(question, config, references, previous):
                 stage = task_data.get('stage', 'generation')
                 selected_images = references if direct else risk_refs if stage == 'blind_review' else []
                 actual_messages = await vision.with_images(messages, selected_images) if selected_images else messages
-                requested_model = 'deepseek-flash' if selected_images else db.setting('model', 'deepseek-chat')
-                response = await client.post("https://api.deepseek.com/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json={"model": requested_model, "messages": actual_messages,
-                        "response_format": {"type": "json_object"}, "max_tokens": 8192})
+                requested_model = providers.config('vision' if selected_images else 'text')['model']
+                response = await providers.complete(client, {"model": requested_model, "messages": actual_messages,
+                        "response_format": {"type": "json_object"}, "max_tokens": 8192}, "vision" if selected_images else "text")
                 if response.status_code != 200:
-                    messages = {401: "DeepSeek 密钥无效，请检查设置。", 402: "DeepSeek 账户余额不足。", 429: "DeepSeek 请求过于频繁，请稍后重试。"}
-                    raise GenerationError(messages.get(response.status_code, f"DeepSeek 服务返回错误（HTTP {response.status_code}），请稍后重试。"))
+                    messages = {401: "AI 服务密钥无效，请检查设置。", 402: "AI 服务账户余额不足。", 429: "AI 服务请求过于频繁，请稍后重试。"}
+                    raise GenerationError(messages.get(response.status_code, f"AI 服务服务返回错误（HTTP {response.status_code}），请稍后重试。"))
                 try:
                     result = response.json()
                 except ValueError as exc:
-                    raise GenerationError("DeepSeek 接口响应无法解析（QUESTION_RESPONSE），请检查网络或代理。") from exc
+                    raise GenerationError("AI 服务接口响应无法解析（QUESTION_RESPONSE），请检查网络或代理。") from exc
                 meter.record('exam', question.get('exam_id'), 'source_image_review' if stage == 'blind_review' and selected_images else stage, result, attempt + 1)
                 total_usage += reported_usage(result)
                 return result
@@ -344,7 +342,7 @@ async def generate_one(question, config, references, previous):
                         generated._review = await quality.review_question(request_model, generated, question["type"], references, previous_for_prompt(previous), course)
                     except quality.ReviewError as exc:
                         raise OutputValidationError(str(exc), code="QUESTION_REVIEW") from exc
-                    generated._review["requested_model"] = 'deepseek-flash' if direct else db.setting("model", "deepseek-chat")
+                    generated._review["requested_model"] = providers.config('vision' if direct else 'text')['model']
                     generated._review["source_images_checked"] = bool(risk_refs)
                     return generated, total_usage
                 except OutputValidationError as exc:
@@ -365,9 +363,9 @@ async def generate_one(question, config, references, previous):
     except deepseek.ClientSetupError as exc:
         raise GenerationError(str(exc), tokens=total_usage) from exc
     except httpx.TimeoutException as exc:
-        raise GenerationError("DeepSeek 响应超时，已保存其他题目，可稍后重试。", tokens=total_usage) from exc
+        raise GenerationError("AI 服务响应超时，已保存其他题目，可稍后重试。", tokens=total_usage) from exc
     except httpx.HTTPError as exc:
-        raise GenerationError("无法连接 DeepSeek，请检查电脑网络。", tokens=total_usage) from exc
+        raise GenerationError("无法连接 AI 服务，请检查电脑网络。", tokens=total_usage) from exc
     except Exception as exc:
         # No provider bodies / headers in user-facing errors.
         raise GenerationError(f"处理模型响应时发生内部错误（QUESTION_INTERNAL:{type(exc).__name__}），请反馈此诊断码。", tokens=total_usage) from exc
@@ -398,7 +396,7 @@ async def run_generation(exam_id):
                     question_config = {**config, "planned_target": target}
                     previous = [db.decode(r, ("options",)) for r in db.rows("SELECT type,stem,options,knowledge FROM questions WHERE exam_id=? AND id!=? AND status='ready' AND stem!='' ORDER BY position", (exam_id, question["id"]))]
                     from . import drafts
-                    signature = drafts.digest({'refs':references,'target':target,'config':{k:v for k,v in config.items() if k not in ('token_budget','max_attempts')}})
+                    signature = drafts.digest({'providers':[providers.identity(),providers.identity('vision')],'refs':references,'target':target,'config':{k:v for k,v in config.items() if k not in ('token_budget','max_attempts')}})
                     question['_candidate_signature'] = signature
                     cached = db.one('SELECT candidate FROM questions WHERE id=?',(question['id'],))['candidate']
                     candidate = json.loads(cached) if cached else {}
@@ -410,7 +408,7 @@ async def run_generation(exam_id):
                         # Only identical evidence can be shared safely; otherwise use normal single generation.
                         if other_refs == references and not db.one('SELECT candidate FROM questions WHERE id=?',(other['id'],))['candidate']:
                             seeds = await generate_pair(question,other,question_config,{**config,'planned_target':other_target},references,previous)
-                            other_signature = drafts.digest({'refs':references,'target':other_target,'config':{k:v for k,v in config.items() if k not in ('token_budget','max_attempts')}})
+                            other_signature = drafts.digest({'providers':[providers.identity(),providers.identity('vision')],'refs':references,'target':other_target,'config':{k:v for k,v in config.items() if k not in ('token_budget','max_attempts')}})
                             with db.connection() as con:
                                 for item,sig in ((question,signature),(other,other_signature)):
                                     con.execute('UPDATE questions SET candidate=? WHERE id=?',(db.dump({'signature':sig,'response':seeds[item['position']]}),item['id']))
@@ -460,8 +458,7 @@ async def generate_pair(first, second, config, other_config, references, previou
     request={'reference_material':references,'avoid_questions':previous_for_prompt(previous),'tasks':tasks,
         'instructions':'一次生成这两道不同的题，分别遵守每题目标和格式。返回 {"questions":[{"position":题号,"question":完整题目对象}]}。'}
     async with deepseek.create_client(timeout=httpx.Timeout(180,connect=15)) as client:
-        response=await client.post('https://api.deepseek.com/chat/completions',headers={'Authorization':f'Bearer {deepseek.api_key()}'},
-            json={'model':db.setting('model','deepseek-chat'),'response_format':{'type':'json_object'},'max_tokens':8192,
+        response=await providers.complete(client, {'model':db.setting('model','deepseek-chat'),'response_format':{'type':'json_object'},'max_tokens':8192,
                 'messages':[{'role':'system','content':system},{'role':'user','content':meter.dumps(request)}]})
     if response.status_code!=200:
         raise GenerationError(f'小批量生成失败（HTTP {response.status_code}）。')

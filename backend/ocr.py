@@ -13,7 +13,7 @@ import pypdfium2 as pdfium
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import db, deepseek, materials, usage
+from . import db, deepseek, providers, materials, usage
 from .limits import MAX_PDF_PAGES
 from .pdf import reusable_pdf_text
 
@@ -56,7 +56,7 @@ def cache_key(image):
                 identity = str(rgb.size).encode() + rgb.tobytes()
     except (OSError, ValueError):
         identity = image
-    return hashlib.sha256((CACHE_VERSION + MODEL + OCR_PROMPT).encode() + identity).hexdigest()
+    return hashlib.sha256((CACHE_VERSION + db.dump(providers.identity("vision")) + OCR_PROMPT).encode() + identity).hexdigest()
 
 
 class OCRError(Exception):
@@ -144,10 +144,10 @@ def decode_response(data) -> tuple[OCRResult, int]:
     tokens = response_tokens(data)
     try:
         if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
-            raise OCRError("DeepSeek 未返回识别结果（OCR_RESPONSE_SHAPE），请稍后重试。")
+            raise OCRError("AI 服务未返回识别结果（OCR_RESPONSE_SHAPE），请稍后重试。")
         choice = data["choices"][0]
         if not isinstance(choice, dict):
-            raise OCRError("DeepSeek 返回结构异常（OCR_RESPONSE_SHAPE），请稍后重试。")
+            raise OCRError("AI 服务返回结构异常（OCR_RESPONSE_SHAPE），请稍后重试。")
         finish = choice.get("finish_reason")
         if finish == "length":
             raise OCRError("此页识别达到输出上限，内容已截断（OCR_TRUNCATED），未覆盖原文，请重试或手动转写。")
@@ -156,7 +156,7 @@ def decode_response(data) -> tuple[OCRResult, int]:
         message = choice.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip():
-            raise OCRError("DeepSeek 返回的转写正文为空或类型异常（OCR_EMPTY_CONTENT），未覆盖原文，请重试。")
+            raise OCRError("AI 服务返回的转写正文为空或类型异常（OCR_EMPTY_CONTENT），未覆盖原文，请重试。")
         return parse_transcription(content), tokens
     except OCRError as exc:
         exc.tokens = tokens
@@ -168,7 +168,7 @@ def decode_response(data) -> tuple[OCRResult, int]:
 async def recognize_page(image: bytes) -> tuple[OCRResult, int]:
     report_progress("client_setup")
     try:
-        key = deepseek.api_key()
+        key = deepseek.api_key("vision")
     except deepseek.ClientSetupError as exc:
         raise OCRError(str(exc)) from exc
     prompt = OCR_PROMPT
@@ -193,17 +193,16 @@ async def recognize_page(image: bytes) -> tuple[OCRResult, int]:
     try:
         async with deepseek.create_client(timeout=httpx.Timeout(240, connect=15)) as client:
             report_progress("requesting")
-            response = await client.post("https://api.deepseek.com/chat/completions",
-                headers={"Authorization": f"Bearer {key}"}, json=body)
+            response = await providers.complete(client, body, "vision")
             report_progress("response_received", response.status_code)
-        errors = {401: "DeepSeek 密钥无效，请检查设置。", 402: "DeepSeek 余额不足，请充值后重试。",
-                  429: "DeepSeek 请求限流，请稍后重试。", 400: "DeepSeek 拒绝了图片识别请求，请检查模型支持情况。"}
+        errors = {401: "AI 服务密钥无效，请检查设置。", 402: "AI 服务余额不足，请充值后重试。",
+                  429: "AI 服务请求限流，请稍后重试。", 400: "AI 服务拒绝了图片识别请求，请检查模型支持情况。"}
         if response.status_code != 200:
-            raise OCRError(errors.get(response.status_code, f"DeepSeek 识别暂不可用（HTTP {response.status_code}），请稍后重试。"))
+            raise OCRError(errors.get(response.status_code, f"AI 服务识别暂不可用（HTTP {response.status_code}），请稍后重试。"))
         try:
             data = response.json()
         except (ValueError, UnicodeError) as exc:
-            raise OCRError("DeepSeek 接口返回无法解析（OCR_RESPONSE_JSON），请检查网络或代理后重试。") from exc
+            raise OCRError("AI 服务接口返回无法解析（OCR_RESPONSE_JSON），请检查网络或代理后重试。") from exc
         context = _usage_context.get()
         if context:
             owner_type, owner_id, stage, attempt = context
@@ -299,7 +298,7 @@ async def run_job(job_id):
                         ("skipped" if cache_hit or not updated else "ready", ("复用相同图片的识别缓存，本次未调用 API。" if cache_hit else "") if updated else "识别期间内容已修正，保留人工版本。", "cached" if cache_hit else "saved", job_id, number))
                     con.execute("UPDATE ocr_jobs SET tokens=tokens+? WHERE id=?", (tokens, job_id))
             except Exception as exc:
-                labels = {"rendering": "渲染页面", "client_setup": "初始化网络客户端", "requesting": "请求 DeepSeek", "response_received": "处理接口响应", "saving": "保存识别结果"}
+                labels = {"rendering": "渲染页面", "client_setup": "初始化网络客户端", "requesting": "请求 AI 服务", "response_received": "处理接口响应", "saving": "保存识别结果"}
                 message = str(exc) if isinstance(exc, OCRError) else f"{labels.get(stage, stage)}时发生内部异常（OCR_INTERNAL:{type(exc).__name__}），已保留原内容。请提供此诊断码和终端诊断行。"
                 frames = traceback.extract_tb(exc.__traceback__)
                 location = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "unknown"

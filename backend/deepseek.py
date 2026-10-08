@@ -1,17 +1,21 @@
 """Shared, proxy-aware DeepSeek transport with credential-safe diagnostics."""
 import httpx
 
-from . import security
+from . import security, providers
 
 
 class ClientSetupError(Exception):
     pass
 
 
-def api_key():
-    key = security.api_key().strip()
+def api_key(role="text"):
+    return validate_key(providers.config(role).get("api_key", ""))
+
+
+def validate_key(value):
+    key = value.strip()
     if not key:
-        raise ClientSetupError("请先在设置中配置 DeepSeek API Key。")
+        raise ClientSetupError("请先在设置中配置所选 AI 服务的 API Key。")
     if not key.isascii() or any(c.isspace() for c in key):
         raise ClientSetupError("API Key 含非英文字符或内部空白，请重新粘贴密钥（DEEPSEEK_KEY_FORMAT）。")
     return key
@@ -30,7 +34,7 @@ def create_client(**kwargs):
 
 async def check_connection(model):
     """Read models only: no textbook transfer and no generation tokens."""
-    key = api_key()
+    key = validate_key(security.api_key())
     try:
         async with create_client(timeout=httpx.Timeout(20, connect=10)) as client:
             response = await client.get("https://api.deepseek.com/models", headers={"Authorization": f"Bearer {key}"})
@@ -51,3 +55,20 @@ async def check_connection(model):
         raise ClientSetupError("连接 DeepSeek 超时，请检查代理是否正常运行（DEEPSEEK_TIMEOUT）。") from exc
     except httpx.HTTPError as exc:
         raise ClientSetupError(f"无法连接 DeepSeek，请检查代理、网络或证书（DEEPSEEK_NETWORK:{type(exc).__name__}）。") from exc
+
+
+async def check_provider(role):
+    p = providers.config(role)
+    try:
+        async with create_client(timeout=httpx.Timeout(20, connect=10), follow_redirects=False) as client:
+            response = await client.get(p['base_url'] + '/models', headers={'Authorization': 'Bearer ' + validate_key(p.get('api_key', ''))})
+        if response.status_code != 200:
+            raise ClientSetupError(f"模型列表检查失败（HTTP {response.status_code}）。部分兼容服务不提供 /models，请核对服务商文档；不会自动尝试付费生成。")
+        data = response.json()
+        models = data.get('data') if isinstance(data, dict) else None
+        if not isinstance(models, list):
+            raise ValueError()
+        available = any(isinstance(m, dict) and m.get('id') == p['model'] for m in models)
+        return {'available':available, 'message':f"连接正常；模型 {p['model']} {'在' if available else '不在'}模型列表中。此检查不验证识图或 JSON 能力，也未调用生成接口。"}
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ClientSetupError('连接检查失败，请检查接口地址、代理和返回格式；未发送教材。') from exc

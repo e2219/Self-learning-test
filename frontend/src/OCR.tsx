@@ -156,11 +156,10 @@ export function DocumentOCR({
     <Modal title="文字与公式识别" close={close}>
       <p className="ocr-document-name">{doc.name}</p>
       <Notice>
-        自动复用正常文字，扫描页、异常文本和待处理表格交给 DeepSeek Flash
-        读取。需要识图的页面会发送至 DeepSeek，按 API
-        用量计费。结果自动保存供出题使用，无需逐页人工确认；图片仍可能被误读。
+        自动复用正常文字，扫描页、异常文本和待处理表格交给 所选识图模型 读取。需要识图的页面会发送至
+        所选识图服务，按 API 用量计费。结果自动保存供出题使用，无需逐页人工确认；图片仍可能被误读。
       </Notice>
-      {settings.data && !settings.data.has_key && (
+      {settings.data && !settings.data.has_vision_key && (
         <Notice>
           <Link to="/settings">先前往设置配置 API Key</Link>
         </Notice>
@@ -194,7 +193,7 @@ export function DocumentOCR({
             !loaded ||
             busy ||
             running(job) ||
-            !settings.data?.has_key ||
+            !settings.data?.has_vision_key ||
             from < 1 ||
             to < from ||
             to > doc.page_count ||
@@ -374,12 +373,16 @@ export function DocumentOCR({
                 <button
                   className="button secondary"
                   disabled={
-                    busy || running(job) || !loaded || page.loading || !settings.data?.has_key
+                    busy ||
+                    running(job) ||
+                    !loaded ||
+                    page.loading ||
+                    !settings.data?.has_vision_key
                   }
                   onClick={() => {
                     if (
                       window.confirm(
-                        `将第 ${number} 页图片发送给 DeepSeek 重新识别，按 API 用量计费；成功后替换此页文本，失败保留原内容。继续吗？`,
+                        `将第 ${number} 页图片发送给 所选识图服务 重新识别，按 API 用量计费；成功后替换此页文本，失败保留原内容。继续吗？`,
                       )
                     )
                       void act(`/documents/${doc.id}/ocr`, {

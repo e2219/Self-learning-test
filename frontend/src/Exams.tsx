@@ -488,21 +488,24 @@ export function QuestionCard({
               >
                 <Edit3 size={16} />
               </button>
-              <button
-                className="icon-button"
-                aria-label="重新生成此题"
-                title="重新生成此题"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      '重新生成会替换此题，并清除当前作答与评分。历史评分快照会保留，继续吗？',
+              {!q.sources.some((s) => s.imported) && (
+                <button
+                  className="icon-button"
+
+                  aria-label="重新生成此题"
+                  title="重新生成此题"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        '重新生成会替换此题，并清除当前作答与评分。历史评分快照会保留，继续吗？',
+                      )
                     )
-                  )
-                    void onAction?.(`/questions/${q.id}/regenerate`);
-                }}
-              >
-                <RefreshCw size={16} />
-              </button>
+                      void onAction?.(`/questions/${q.id}/regenerate`);
+                  }}
+                >
+                  <RefreshCw size={16} />
+                </button>
+              )}
               <button
                 className="icon-button"
                 aria-label="删除题目"
@@ -524,6 +527,7 @@ export function QuestionCard({
           <ChevronRight size={13} />
         </Link>
       )}
+      <ExternalAttribution sources={q.sources} />
       {q.error && <Notice tone="error">{q.error}</Notice>}
       {complete && (
         <small className="muted">
@@ -531,7 +535,9 @@ export function QuestionCard({
             ? q.review?.method === 'combined'
               ? '已通过 AI 单次合并审题（非独立盲审），仍建议核对'
               : `已通过 AI 独立审题${q.review?.source_images_checked ? '及原图复核' : ''}，仍建议人工核对`
-            : '此题尚无独立审题记录'}
+            : q.sources.some((s) => s.imported)
+              ? '来源摘录题；答案由导入者整理，未经 AI 核验'
+              : '此题尚无独立审题记录'}
         </small>
       )}
       {!complete && !q.stem ? (
@@ -699,29 +705,32 @@ export function QuestionCard({
                   <MathText>{q.answer}</MathText>
                   <div className="solution-label">解题思路</div>
                   <MathText>{q.explanation}</MathText>
-                  <button
-                    className="button ghost"
-                    disabled={busy || saving || !!q.review?.expanded_explanation}
-                    onClick={async () => {
-                      if (savingRef.current) return;
-                      savingRef.current = true;
-                      setSaving(true);
-                      setError('');
-                      try {
-                        await api(`/questions/${q.id}/explanation`, json('POST'));
-                        onChange();
-                      } catch (e) {
-                        setError((e as Error).message);
-                      } finally {
-                        savingRef.current = false;
-                        setSaving(false);
-                      }
-                    }}
-                  >
-                    {q.review?.expanded_explanation
-                      ? '已补充详解（后续复用）'
-                      : '补充详细解析（调用 API 并核验）'}
-                  </button>
+                  {!q.sources.some((s) => s.imported) && (
+                    <button
+                      className="button ghost"
+
+                      disabled={busy || saving || !!q.review?.expanded_explanation}
+                      onClick={async () => {
+                        if (savingRef.current) return;
+                        savingRef.current = true;
+                        setSaving(true);
+                        setError('');
+                        try {
+                          await api(`/questions/${q.id}/explanation`, json('POST'));
+                          onChange();
+                        } catch (e) {
+                          setError((e as Error).message);
+                        } finally {
+                          savingRef.current = false;
+                          setSaving(false);
+                        }
+                      }}
+                    >
+                      {q.review?.expanded_explanation
+                        ? '已补充详解（后续复用）'
+                        : '补充详细解析（调用 API 并核验）'}
+                    </button>
+                  )}
                   <div className="sources">
                     <BookOpen size={14} />
                     <div>
@@ -729,14 +738,19 @@ export function QuestionCard({
                       {q.sources.map((s, i) => (
                         <a
                           key={i}
-                          href={`/api/documents/${s.document_id}/file#page=${s.page}`}
+                          href={s.url || `/api/documents/${s.document_id}/file#page=${s.page}`}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          {s.name} · PDF 第 {s.page} 页
+                          {s.name}
+                          {s.url ? ' · 原文' : ` · PDF 第 ${s.page} 页`}
                         </a>
                       ))}
-                      <small>AI 新编题；引用为知识依据。请结合教材核验解答。</small>
+                      <small>
+                        {q.sources.some((s) => s.imported)
+                          ? '原文摘录；请核对导入者整理的答案。'
+                          : 'AI 新编题；引用为知识依据。请结合教材核验解答。'}
+                      </small>
                     </div>
                   </div>
                   {practice && (
@@ -1124,6 +1138,7 @@ export function PrintPage() {
               {i + 1}. {typeNames[q.type]}（{q.points} 分）
             </div>
             <MathText>{q.stem}</MathText>
+            <ExternalAttribution sources={q.sources} />
             {q.options.map((o, j) => (
               <div className="print-option" key={j}>
                 <span>{'ABCD'[j]}.</span>
@@ -1137,8 +1152,10 @@ export function PrintPage() {
                 <strong>解析</strong>
                 <MathText>{q.explanation}</MathText>
                 <p className="print-citation">
-                  知识依据：{q.sources.map((s) => `${s.name} 第 ${s.page} 页`).join('；')}（PDF
-                  页码）
+                  知识依据：
+                  {q.sources
+                    .map((s) => (s.url ? `${s.name}（原文摘录）` : `${s.name} 第 ${s.page} 页`))
+                    .join('；')}
                 </p>
               </div>
             ) : (
@@ -1149,7 +1166,12 @@ export function PrintPage() {
           </section>
         ))}
         <footer className="print-footer">
-          知习 · {answers ? 'AI 参考解答，请结合教材核验。' : '认真思考，写下你的推导过程。'}
+          知习 ·{' '}
+          {answers
+            ? data.config.origin === 'web_import'
+              ? '导入者整理的参考解答，请对照原文核验。'
+              : 'AI 参考解答，请结合教材核验。'
+            : '认真思考，写下你的推导过程。'}
         </footer>
       </div>
     </>
@@ -1233,6 +1255,37 @@ export function Review() {
         <Sparkles size={17} />
         <span>第一版支持重做原题。之后可继续扩展同知识点变式题与复习计划。</span>
       </div>
+    </>
+  );
+}
+
+function ExternalAttribution({ sources }: { sources: import('./types').Source[] }) {
+  return (
+    <>
+      {sources
+        .filter((s) => s.imported)
+        .map((s) => (
+          <p className="external-attribution" key={s.document_id}>
+            来源：
+            <a href={s.url} target="_blank" rel="noreferrer">
+              {s.name}
+            </a>{' '}
+            ·{' '}
+            <a href={s.authors_url} target="_blank" rel="noreferrer">
+              维基学院贡献者（作者记录）
+            </a>{' '}
+            ·{' '}
+            <a href={s.license_url} target="_blank" rel="noreferrer">
+              {s.license}
+            </a>
+            <br />
+            {s.modified
+              ? '导入后已修订；改编部分按原许可共享。'
+              : '题干/选项为摘录，答案与格式由导入者整理；改编部分按原许可共享。'}
+            <br />
+            原文：{s.url} · 许可：{s.license_url}
+          </p>
+        ))}
     </>
   );
 }

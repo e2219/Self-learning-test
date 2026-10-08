@@ -259,12 +259,13 @@ export function Generator() {
         </Notice>
       )}
       {error && <Notice tone="error">{error}</Notice>}
-      {settings.data && !settings.data.has_key && (
-        <Notice>
-          还没有配置 DeepSeek API Key。你可以先选择资料，<Link to="/settings">前往设置</Link>
-          后再生成。
-        </Notice>
-      )}
+      {settings.data &&
+        !(readingMode === 'vision' ? settings.data.has_vision_key : settings.data.has_key) && (
+          <Notice>
+            还没有配置 AI API Key。你可以先选择资料，<Link to="/settings">前往设置</Link>
+            后再生成。
+          </Notice>
+        )}
       {courses.error && <Notice tone="error">{courses.error}</Notice>}
       {courses.loading ? (
         <Loading />
@@ -373,8 +374,8 @@ export function Generator() {
               {readingMode === 'vision' && (
                 <Notice>
                   直接读取所选图片或 PDF 页面，无需先识别文字。每次最多 4
-                  页；分配表在本机生成，不提取考点、不调用 API。出题与审题使用 DeepSeek
-                  Flash，可能多次读取原图，反复使用同一资料时不一定更省。
+                  页；分配表在本机生成，不提取考点、不调用
+                  API。出题与审题使用所选识图模型，可能多次读取原图，反复使用同一资料时不一定更省。
                 </Notice>
               )}
               {readingMode === 'vision' && selectedPages > 4 && (
@@ -772,7 +773,12 @@ export function Generator() {
               suspendSave={!!localRecovery}
               plan={plan}
               config={payload()}
-              enabled={!!valid && !!settings.data?.has_key}
+              enabled={
+                !!valid &&
+                !!(readingMode === 'vision'
+                  ? settings.data?.has_vision_key
+                  : settings.data?.has_key)
+              }
               changed={setPlan}
             />
           </div>
@@ -823,7 +829,9 @@ export function Generator() {
                 disabled={
                   busy ||
                   !valid ||
-                  !settings.data?.has_key ||
+                  !(readingMode === 'vision'
+                    ? settings.data?.has_vision_key
+                    : settings.data?.has_key) ||
                   needsPlanning(plan, payload()) ||
                   !!plan?.exam_id ||
                   !!localRecovery
@@ -865,7 +873,7 @@ export function Generator() {
                     : '预览检索片段'}
               </button>
               <p className="summary-note">
-                生成将调用 DeepSeek
+                生成将调用 所选 AI 服务
                 API，按实际用量计费。题目逐题审查并保存，可在用量设置中开启小批量生成，通常需要等待数分钟。
               </p>
             </div>

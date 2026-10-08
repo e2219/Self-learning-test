@@ -46,7 +46,18 @@ export const typeNames: Record<QuestionType, string> = {
   calculation: '计算题',
   proof: '证明题',
 };
-export type Source = { document_id: string; page: number; name: string };
+export type Source = {
+  document_id: string;
+  page: number;
+  name: string;
+  imported?: boolean;
+  modified?: boolean;
+  url?: string;
+  authors_url?: string;
+  license?: string;
+  license_url?: string;
+  revision?: number;
+};
 export type Question = {
   id: string;
   exam_id: string;
@@ -83,6 +94,7 @@ export type SourceRange = {
   end: number;
 };
 export type ExamConfig = {
+  origin?: string;
   course_id: string;
   title: string;
   ranges: SourceRange[];
@@ -124,6 +136,9 @@ export type Exam = {
   questions: Question[];
 };
 export type Settings = {
+  deepseek_has_key: boolean;
+  has_vision_key: boolean;
+  providers: Record<'text' | 'vision', import('./ProviderSettings').Provider>;
   has_key: boolean;
   key_from_env: boolean;
   model: string;
