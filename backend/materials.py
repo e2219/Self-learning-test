@@ -1,4 +1,4 @@
-"""Conservative table gates. Structural checks cannot certify OCR accuracy."""
+"""Table eligibility checks. Structural checks cannot certify OCR accuracy."""
 import hashlib
 import re
 
@@ -34,14 +34,21 @@ def table_info(text, flagged=False, reviewed=False):
 
 
 def page_info(page):
-    return table_info(page['text'], page.get('table_flag', False), page.get('table_reviewed', False))
+    info = table_info(page['text'], page.get('table_flag', False), page.get('table_reviewed', False))
+    # Vision output with valid structure is usable without a human confirmation.
+    # Explicitly flagged pages remain blocked; never label automatic checks as human review.
+    info['auto_usable'] = bool(page.get('ocr_done') and not page.get('edited')
+                               and not page.get('table_flag') and not info['table_issues'])
+    if info['auto_usable']:
+        info['needs_review'] = False
+    return info
 
 
 def chunks(page):
     info = page_info(page)
     if info['needs_review']:
         return []
-    # Keep the whole verified page including title, units and footnotes. No table slicing.
+    # Keep the whole eligible page including title, units and footnotes. No table slicing.
     if info['has_table']:
         return [page['text'].strip()]
     return [page['text'][offset:offset + 2800].strip() for offset in range(0, len(page['text']), 2400)]

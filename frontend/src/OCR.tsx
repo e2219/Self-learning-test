@@ -63,10 +63,12 @@ export function DocumentOCR({
   const [number, setNumber] = useState(start),
     [editing, setEditing] = useState(false),
     [text, setText] = useState('');
+  const [inspect, setInspect] = useState(false);
+  const [listOffset, setListOffset] = useState(0);
   const [saved, setSaved] = useState('');
   const settings = useRemote<Settings>('/settings');
   const page = useRemote<Page>(`/documents/${doc.id}/pages/${number}`);
-  const max = settings.data?.ocr_max_pages ?? 20;
+  const max = settings.data?.ocr_max_pages ?? 2000;
   useEffect(() => {
     let live = true;
     api<Job | null>(`/documents/${doc.id}/ocr`)
@@ -110,6 +112,7 @@ export function DocumentOCR({
     setSaved('');
     try {
       setJob(await api<Job>(path, json('POST', body)));
+      setListOffset(0);
       await page.reload();
     } catch (e) {
       setError((e as Error).message);
@@ -123,14 +126,16 @@ export function DocumentOCR({
     setEditing(false);
     setSaved('');
     setNumber(value);
+    setInspect(true);
   }
   const done = job?.pages.filter((p) => ['ready', 'skipped'].includes(p.status)).length ?? 0;
   return (
     <Modal title="文字与公式识别" close={close}>
       <p className="ocr-document-name">{doc.name}</p>
       <Notice>
-        使用 DeepSeek Flash 识别正文和 LaTeX 公式，复用设置中的 API Key。所选页面图片将发送至
-        DeepSeek，按 API 用量计费。建议先试 1–5 页，核对效果后再扩大范围。
+        自动复用正常文字，扫描页、异常文本和待处理表格交给 DeepSeek Flash
+        读取。需要识图的页面会发送至 DeepSeek，按 API
+        用量计费。结果自动保存供出题使用，无需逐页人工确认；图片仍可能被误读。
       </Notice>
       {settings.data && !settings.data.has_key && (
         <Notice>
@@ -178,9 +183,20 @@ export function DocumentOCR({
         </button>
       </div>
       <p className="field-help">
-        使用 PDF 实际页序，每次最多 {max} 页。默认复用未发现明显异常的 PDF 文本或已有 OCR
+        使用 PDF 实际页序，每个任务最多 {max}{' '}
+        页，后台逐页处理，不会一次上传整本书。默认复用未发现明显异常的 PDF 文本或已有 OCR
         结果；逐字断行等异常文本会识别，手动修正始终保留。
       </p>
+      <button
+        className="button ghost"
+        disabled={running(job) || busy}
+        onClick={() => {
+          setFrom(1);
+          setTo(Math.min(doc.page_count, max));
+        }}
+      >
+        选择整份资料{doc.page_count > max ? `（前 ${max} 页）` : ''}
+      </button>
       <label className="ocr-checkbox">
         <input
           type="checkbox"
@@ -228,8 +244,29 @@ export function DocumentOCR({
               0 tokens 表示尚未记录到接口用量，不等于确认未调用或未计费。请查看每页的调用阶段。
             </p>
           )}
+          {job.pages.length > 50 && (
+            <div className="button-group">
+              <button
+                className="button ghost"
+                disabled={listOffset === 0}
+                onClick={() => setListOffset(Math.max(0, listOffset - 50))}
+              >
+                上一组页面
+              </button>
+              <span>
+                {Math.floor(listOffset / 50) + 1} / {Math.ceil(job.pages.length / 50)}
+              </span>
+              <button
+                className="button ghost"
+                disabled={listOffset + 50 >= job.pages.length}
+                onClick={() => setListOffset(listOffset + 50)}
+              >
+                下一组页面
+              </button>
+            </div>
+          )}
           <div className="ocr-page-list">
-            {job.pages.map((p) => (
+            {job.pages.slice(listOffset, listOffset + 50).map((p) => (
               <div key={p.number}>
                 <button
                   className={`button ${number === p.number ? 'secondary' : 'ghost'}`}
@@ -254,137 +291,155 @@ export function DocumentOCR({
           </div>
         </section>
       )}
-      <div className="preview-toolbar">
-        <label className="inline-label">
-          核对 PDF 页码
-          <input
-            type="number"
-            min={1}
-            max={doc.page_count}
-            value={number}
-            onChange={(e) => selectPage(Number(e.target.value))}
-          />
-        </label>
-        <a
-          className="text-link"
-          href={`/api/documents/${doc.id}/file#page=${number}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          打开原 PDF
-        </a>
-      </div>
-      {page.error && <Notice tone="error">{page.error}</Notice>}
-      {page.data?.warning && <Notice>{page.data.warning}</Notice>}
-      {page.data && (
-        <Notice>
-          {page.data.text_source === 'manual'
-            ? '当前内容来自手动修正，自动识别不会覆盖。需要参考新识别结果时，可使用局部高清识别生成草稿。'
-            : page.data.text_source === 'ocr'
-              ? '当前内容来自已保存的 AI 图片识别结果；再次复用不会调用 API。'
-              : '当前内容来自 PDF 自带文本层，尚未通过 AI 图片识别；提取文本不消耗 tokens。'}
-          {page.data.text_quality_issue && <p>{page.data.text_quality_issue}</p>}
-          {page.data.text_source !== 'manual' && (
-            <button
-              className="button secondary"
-              disabled={busy || running(job) || !loaded || page.loading || !settings.data?.has_key}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `将第 ${number} 页图片发送给 DeepSeek 重新识别，按 API 用量计费；成功后替换此页文本，失败保留原内容。继续吗？`,
-                  )
-                )
-                  void act(`/documents/${doc.id}/ocr`, { start: number, end: number, force: true });
-              }}
-            >
-              仅重新识别当前页（调用 API）
-            </button>
-          )}
-        </Notice>
+      <button className="button secondary" onClick={() => setInspect(!inspect)}>
+        {inspect ? '收起原文对照' : '查看原文与读取结果（可选）'}
+      </button>
+      {!running(job) && job?.status === 'ready' && (
+        <button className="button primary" onClick={close}>
+          完成，返回出题
+        </button>
       )}
-      {page.data && !editing && (
-        <MaterialQuality
-          key={`${doc.id}-${number}`}
-          docId={doc.id}
-          page={page.data}
-          reload={page.reload}
-        />
-      )}
-      <div className="ocr-comparison">
-        <div>
-          <h3>原始页面</h3>
-          <img
-            key={number}
-            src={`/api/documents/${doc.id}/pages/${number}/image`}
-            alt={`PDF 第 ${number} 页原图`}
-          />
-        </div>
-        <div>
-          <div className="section-heading">
-            <h3>页面文本 {page.data?.edited ? '· 已修正' : ''}</h3>
-            {!editing && (
-              <button
-                className="text-link"
-                disabled={page.loading || !page.data}
-                onClick={() => {
-                  setText(page.data?.text || '');
-                  setEditing(true);
-                  setSaved('');
-                }}
-              >
-                修正此页内容
-              </button>
-            )}
-          </div>
-          {editing ? (
-            <>
-              <textarea
-                className="page-editor"
-                aria-label="OCR 页面修正"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                rows={16}
-                maxLength={50000}
+      {inspect && (
+        <>
+          <div className="preview-toolbar">
+            <label className="inline-label">
+              核对 PDF 页码
+              <input
+                type="number"
+                min={1}
+                max={doc.page_count}
+                value={number}
+                onChange={(e) => selectPage(Number(e.target.value))}
               />
-              <p className="field-help">公式可写成 $P(A)=0.5$；修改后会用于后续出题。</p>
-              <div className="button-group">
+            </label>
+            <a
+              className="text-link"
+              href={`/api/documents/${doc.id}/file#page=${number}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              打开原 PDF
+            </a>
+          </div>
+          {page.error && <Notice tone="error">{page.error}</Notice>}
+          {page.data?.warning && <Notice>{page.data.warning}</Notice>}
+          {page.data && (
+            <Notice>
+              {page.data.text_source === 'manual'
+                ? '当前内容来自手动修正，自动识别不会覆盖。需要参考新识别结果时，可使用局部高清识别生成草稿。'
+                : page.data.text_source === 'ocr'
+                  ? '当前内容来自已保存的 AI 图片识别结果；再次复用不会调用 API。'
+                  : '当前内容来自 PDF 自带文本层，尚未通过 AI 图片识别；提取文本不消耗 tokens。'}
+              {page.data.text_quality_issue && <p>{page.data.text_quality_issue}</p>}
+              {page.data.text_source !== 'manual' && (
                 <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    setError('');
-                    try {
-                      await api(`/documents/${doc.id}/pages/${number}`, json('PUT', { text }));
-                      await page.reload();
-                      setEditing(false);
-                      setSaved('页面修正已保存。');
-                    } catch (e) {
-                      setError((e as Error).message);
-                    } finally {
-                      setBusy(false);
-                    }
+                  className="button secondary"
+                  disabled={
+                    busy || running(job) || !loaded || page.loading || !settings.data?.has_key
+                  }
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `将第 ${number} 页图片发送给 DeepSeek 重新识别，按 API 用量计费；成功后替换此页文本，失败保留原内容。继续吗？`,
+                      )
+                    )
+                      void act(`/documents/${doc.id}/ocr`, {
+                        start: number,
+                        end: number,
+                        force: true,
+                      });
                   }}
                 >
-                  保存修正
+                  仅重新识别当前页（调用 API）
                 </button>
-                <button className="button ghost" onClick={() => setEditing(false)}>
-                  取消修正
-                </button>
-              </div>
-            </>
-          ) : page.loading && !page.data ? (
-            <Loading />
-          ) : (
-            <div className="page-text">
-              <MathText>
-                {page.data?.text || '此页尚无可用文字。识别后会在这里显示正文和公式。'}
-              </MathText>
-            </div>
+              )}
+            </Notice>
           )}
-          {saved && <Notice tone="success">{saved}</Notice>}
-        </div>
-      </div>
+          {page.data && !editing && (
+            <MaterialQuality
+              key={`${doc.id}-${number}`}
+              docId={doc.id}
+              page={page.data}
+              reload={page.reload}
+            />
+          )}
+          <div className="ocr-comparison">
+            <div>
+              <h3>原始页面</h3>
+              <img
+                key={number}
+                src={`/api/documents/${doc.id}/pages/${number}/image`}
+                alt={`PDF 第 ${number} 页原图`}
+              />
+            </div>
+            <div>
+              <div className="section-heading">
+                <h3>页面文本 {page.data?.edited ? '· 已修正' : ''}</h3>
+                {!editing && (
+                  <button
+                    className="text-link"
+                    disabled={page.loading || !page.data}
+                    onClick={() => {
+                      setText(page.data?.text || '');
+                      setEditing(true);
+                      setSaved('');
+                    }}
+                  >
+                    修正此页内容
+                  </button>
+                )}
+              </div>
+              {editing ? (
+                <>
+                  <textarea
+                    className="page-editor"
+                    aria-label="OCR 页面修正"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    rows={16}
+                    maxLength={50000}
+                  />
+                  <p className="field-help">公式可写成 $P(A)=0.5$；修改后会用于后续出题。</p>
+                  <div className="button-group">
+                    <button
+                      className="button primary"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setError('');
+                        try {
+                          await api(`/documents/${doc.id}/pages/${number}`, json('PUT', { text }));
+                          await page.reload();
+                          setEditing(false);
+                          setSaved('页面修正已保存。');
+                        } catch (e) {
+                          setError((e as Error).message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      保存修正
+                    </button>
+                    <button className="button ghost" onClick={() => setEditing(false)}>
+                      取消修正
+                    </button>
+                  </div>
+                </>
+              ) : page.loading && !page.data ? (
+                <Loading />
+              ) : (
+                <div className="page-text">
+                  <MathText>
+                    {page.data?.text || '此页尚无可用文字。识别后会在这里显示正文和公式。'}
+                  </MathText>
+                </div>
+              )}
+              {saved && <Notice tone="success">{saved}</Notice>}
+            </div>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

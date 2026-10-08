@@ -25,6 +25,7 @@ export type Page = {
   edited: number;
   has_table: boolean;
   needs_review: boolean;
+  auto_usable?: boolean;
   table_issues: string[];
   text_hash: string;
 };

@@ -12,7 +12,8 @@ import pypdfium2 as pdfium
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import db, deepseek
+from . import db, deepseek, materials
+from .limits import MAX_PDF_PAGES
 from .pdf import reusable_pdf_text
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ TEXT_END = "<<<OCR_TEXT_END>>>"
 BLANK_PAGE = "[空白页]"
 
 MODEL = "deepseek-flash"
-MAX_PAGES = 20
+MAX_PAGES = MAX_PDF_PAGES
 active_jobs: set[str] = set()
 _render_lock = threading.Lock()  # PDFium is not thread-safe, even across different documents.
 
@@ -226,7 +227,7 @@ async def run_job(job_id):
             page = db.one("SELECT * FROM pages WHERE document_id=? AND number=?", (doc_id, number))
             if not page:
                 break
-            if page["edited"] or (not job["force"] and (page["ocr_done"] or reusable_pdf_text(page["text"]))):
+            if page["edited"] or (not job["force"] and (page["ocr_done"] or (reusable_pdf_text(page["text"]) and not materials.page_info(page)["needs_review"]))):
                 reason = ("保留手动修正，本次未调用 API。" if page["edited"] else
                           "复用已保存的 AI 识别结果，本次未调用 API。" if page["ocr_done"] else
                           "复用 PDF 自带文本，本次未调用 API；内容不正确时请重新识别当前页。")
@@ -247,7 +248,7 @@ async def run_job(job_id):
                 image = await run_in_threadpool(render_page, db.DATA_DIR / "uploads" / f"{doc_id}.pdf", number)
                 result, tokens = await recognize_page(image)
                 report_progress("saving")
-                warning = "AI 识别结果，请对照原页核验公式、上下标和符号。"
+                warning = "AI 图片读取结果已保存；通过内容检查的页面可用于出题，原文对照与修正为可选操作。"
                 if len(result.text.strip()) < 40:
                     warning += " 此页文字较少，可能为空白页或图片页。"
                 if result.notes:

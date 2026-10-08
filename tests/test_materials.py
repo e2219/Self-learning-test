@@ -56,3 +56,11 @@ def test_crop_render_is_bounded_and_uses_selected_aspect(client, setup):
     image = Image.open(io.BytesIO(ocr.render_page(path, 1, {'x': 0, 'y': 0, 'width': 1, 'height': .5})))
     assert max(image.size) <= 2401
     assert image.width > image.height
+
+
+def test_vision_table_structure_checks_are_not_human_confirmation():
+    page = {'text': TABLE, 'ocr_done': 1}
+    assert materials.chunks(page) == [TABLE]
+    page['text'] = TABLE.replace('| A | 10 | 12 |', '| A | 10 |')
+    assert materials.page_info(page)['needs_review']
+    assert materials.chunks(page) == []

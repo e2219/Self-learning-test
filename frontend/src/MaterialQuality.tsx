@@ -38,9 +38,11 @@ export function MaterialQuality({
       {page.has_table ? (
         <>
           <Notice>
-            {page.needs_review
-              ? '此页含表格，核对前不用于出题。请对照原页检查行列、数据、单位和脚注。'
-              : '此表格页已人工确认；再次修改或识别后需要重新核对。'}
+            {page.auto_usable
+              ? '此页已通过图片读取及表格结构检查，可直接用于出题；数据准确性仍可对照原页检查。'
+              : page.needs_review
+                ? '此页含表格，核对前不用于出题。请对照原页检查行列、数据、单位和脚注。'
+                : '此表格页已人工确认；再次修改或识别后需要重新核对。'}
           </Notice>
           {page.table_issues?.map((issue, i) => (
             <Notice key={i} tone="error">
@@ -53,7 +55,11 @@ export function MaterialQuality({
             disabled={busy || !!page.table_issues?.length}
             onClick={() => mark(!!page.needs_review)}
           >
-            {page.needs_review ? '已对照原页核对表格' : '撤销表格确认'}
+            {page.auto_usable
+              ? '发现问题，标为待核对'
+              : page.needs_review
+                ? '已对照原页核对表格'
+                : '撤销表格确认'}
           </button>
         </>
       ) : (

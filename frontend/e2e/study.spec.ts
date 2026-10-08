@@ -168,6 +168,8 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
   await expect(modal.getByLabel('识别结束页')).toHaveValue('1');
   await modal.getByRole('button', { name: '开始识别', exact: true }).click();
   await expect(modal.getByText('已完成 · 第 1–1 页 · 1/1 页')).toBeVisible({ timeout: 10000 });
+  await expect(modal.locator('.page-text')).toHaveCount(0);
+  await modal.getByRole('button', { name: '查看原文与读取结果（可选）' }).click();
   await expect(modal.locator('.page-text')).toContainText('扫描页识别测试');
   await expect(modal.locator('.katex').first()).toBeVisible();
   await expect(modal.getByRole('img', { name: 'PDF 第 1 页原图' })).toBeVisible();

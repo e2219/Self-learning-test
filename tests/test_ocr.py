@@ -111,7 +111,7 @@ def test_cancel_finishes_current_page_and_protects_delete(client, setup, monkeyp
 def test_ocr_bounds_auth_and_key(client, setup):
     doc = blank_doc(client, setup[0], count=21)
     path = f"/api/documents/{doc['id']}/ocr"
-    for start, end in [(0, 1), (2, 1), (1, 22), (1, 21)]:
+    for start, end in [(0, 1), (2, 1), (1, 22)]:
         assert client.post(path, json={'start': start, 'end': end}).status_code == 422
     assert client.get(path).json() is None
     db.set_setting('api_key', '')
@@ -318,3 +318,36 @@ def test_pdf_text_quality_controls_reuse(client, setup, monkeypatch, text, shoul
     assert len(calls) == int(should_call) + 1
     assert client.get(page_url).json()['text_source'] == 'manual'
     assert client.get(page_url).json()['text'] == manual
+
+
+def test_large_reading_queue_and_configured_bound(client, setup, monkeypatch):
+    doc = blank_doc(client, setup[0], count=21)
+    path = f"/api/documents/{doc['id']}/ocr"
+    monkeypatch.setattr(ocr, 'recognize_page', recognize)
+    monkeypatch.setattr(ocr, 'render_page', lambda *args: b'\xff\xd8mock')
+    response = client.post(path, json={'start': 1, 'end': 21})
+    assert response.status_code == 201
+    job = client.get(f"/api/ocr/{response.json()['id']}").json()
+    assert job['status'] == 'ready' and job['tokens'] == 21 * 42
+    assert len(job['pages']) == 21
+    monkeypatch.setattr(ocr, 'MAX_PAGES', 20)
+    assert client.post(path, json={'start': 1, 'end': 21}).status_code == 422
+
+
+def test_table_reading_automatically_becomes_usable(client, setup, monkeypatch):
+    from tests.test_materials import TABLE
+    doc_id = setup[1]['id']
+    db.execute('UPDATE pages SET text=?,edited=0,ocr_done=0 WHERE document_id=? AND number=1', (TABLE, doc_id))
+    calls = []
+    async def read(image):
+        calls.append(1)
+        return ocr.OCRResult(text=TABLE), 42
+    monkeypatch.setattr(ocr, 'recognize_page', read)
+    path = f'/api/documents/{doc_id}'
+    client.post(path+'/ocr', json={'start': 1, 'end': 1})
+    page = client.get(path+'/pages/1').json()
+    assert len(calls) == 1 and page['auto_usable'] and not page['needs_review']
+    assert client.post('/api/retrieval-preview', json=exam_config(setup)).status_code == 200
+    # Explicit user concerns must never be treated as an automatic confirmation.
+    page = client.put(path+'/pages/1/table-review', json={'text_hash': page['text_hash'], 'confirmed': False}).json()
+    assert page['needs_review'] and not page['auto_usable']
