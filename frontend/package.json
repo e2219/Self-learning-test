@@ -8,8 +8,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test:e2e": "playwright test",
-    "format": "prettier --write src e2e *.ts *.json index.html",
-    "format:check": "prettier --check src e2e *.ts *.json index.html"
+    "format": "prettier --write src e2e e2e-library *.ts *.json *.html",
+    "format:check": "prettier --check src e2e e2e-library *.ts *.json *.html",
+    "test:library": "playwright test -c playwright.library.config.ts"
   },
   "dependencies": {
     "katex": "^0.19.0",

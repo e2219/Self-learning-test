@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
+  Share2,
   Bookmark,
   BookOpen,
   Check,
@@ -37,6 +38,9 @@ import { typeNames } from './types';
 import { Empty, Loading, MathText, Modal, Notice, PageHeading, Status } from './ui';
 
 export function Exams() {
+  const navigate = useNavigate();
+  const [importError, setImportError] = useState(''),
+    [importing, setImporting] = useState(false);
   const courses = useRemote<Course[]>('/courses');
   const [courseId, setCourseId] = useState(''),
     [search, setSearch] = useState('');
@@ -49,10 +53,40 @@ export function Exams() {
         title="每一次练习，都被保留。"
         description="回到做过的试卷，继续思考，或再练一次。"
         action={
-          <Link className="button primary" to="/generate">
-            <Plus size={17} />
-            创建测验
-          </Link>
+          <div className="button-group">
+            <label className="button secondary">
+              {importing ? '正在导入…' : '导入试卷包'}
+              <input
+                type="file"
+                accept=".json,application/json"
+                hidden
+                disabled={importing}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setImporting(true);
+                  setImportError('');
+                  try {
+                    if (file.size > 2 * 1024 * 1024) throw new Error('试卷包不能超过 2 MB。');
+                    const imported = await api<Exam>(
+                      '/imports/study-pack',
+                      json('POST', JSON.parse(await file.text())),
+                    );
+                    navigate(`/exams/${imported.id}`);
+                  } catch (err) {
+                    setImportError((err as Error).message);
+                  } finally {
+                    setImporting(false);
+                  }
+                }}
+              />
+            </label>
+            <Link className="button primary" to="/generate">
+              <Plus size={17} />
+              创建测验
+            </Link>
+          </div>
         }
       />
       <div className="filter-bar">
@@ -79,6 +113,10 @@ export function Exams() {
         </select>
         <span>{filtered?.length || 0} 份试卷</span>
       </div>
+      {importError && <Notice tone="error">{importError}</Notice>}
+      <p className="field-help">
+        可导入共享库下载的 JSON 试卷包，答案、评分和错题记录只保存在自己的电脑。
+      </p>
       {exams.error && <Notice tone="error">{exams.error}</Notice>}
       {exams.loading ? (
         <Loading />
@@ -423,6 +461,16 @@ export function QuestionCard({
           )}
         </div>
         <div className="question-tools">
+          {complete && (
+            <a
+              className="icon-button"
+              aria-label="导出题目"
+              title="导出题目（不含个人作答）"
+              href={`/api/questions/${q.id}/share`}
+            >
+              <Share2 size={16} />
+            </a>
+          )}
           {complete && (
             <>
               <button
@@ -774,6 +822,13 @@ export function ExamPage() {
         description={`${data.questions.length} 道题 · ${data.total_points} 分 · ${data.config.difficulty} · ${date(data.created_at)}`}
         action={
           <div className="button-group">
+            <a
+              className={`button secondary ${ready ? '' : 'disabled'}`}
+              href={`/api/exams/${examId}/share`}
+            >
+              <Share2 size={16} />
+              导出试卷包
+            </a>
             <Link
               target="_blank"
               className={`button secondary ${ready ? '' : 'disabled'}`}
@@ -794,6 +849,11 @@ export function ExamPage() {
       />
       {(error || exam.error) && <Notice tone="error">{error || exam.error}</Notice>}
       {info && <Notice>{info}</Notice>}
+      {data.config.imported && (
+        <Notice>
+          这是导入的共享试卷。作答和评分仅保存在本机；未附原教材，不支持重新生成或修改题目内容。
+        </Notice>
+      )}
       {data.error && <Notice>{data.error}</Notice>}
       {data.coverage && (
         <details className="panel">
@@ -878,7 +938,7 @@ export function ExamPage() {
               question={q}
               index={i + 1}
               practice={mode === 'practice'}
-              editable
+              editable={!data.config.imported}
               busy={generating || actionBusy}
               onChange={() => void exam.reload()}
               onAction={action}
@@ -1059,6 +1119,16 @@ export function Review() {
         eyebrow="REVIEW & REFLECT"
         title="把薄弱点，变成下一次进步。"
         description="重做一道错题，理清一个概念。理解就这样慢慢积累。"
+        action={
+          review.data?.length ? (
+            <a
+              className="button secondary"
+              href={`/api/review/share?course_id=${courseId}&mode=${mode}`}
+            >
+              导出练习包（前 30 题）
+            </a>
+          ) : undefined
+        }
       />
       <div className="filter-bar">
         <div className="segmented">

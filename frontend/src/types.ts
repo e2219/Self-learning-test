@@ -61,6 +61,7 @@ export type Question = {
 };
 export type SourceRange = { document_id: string; start: number; end: number };
 export type ExamConfig = {
+  imported?: boolean;
   course_id: string;
   title: string;
   ranges: SourceRange[];

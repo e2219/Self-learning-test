@@ -57,10 +57,10 @@ def main():
         run([npm, "ci"], frontend)
         stamp.write_text(signature)
     inputs = [p for p in (frontend / "src").rglob("*") if p.is_file()]
-    inputs += [frontend / name for name in ("package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts")]
+    inputs += [frontend / name for name in ("package.json", "package-lock.json", "index.html", "library.html", "tsconfig.json", "vite.config.ts")]
     signature = digest(inputs)
     stamp = frontend / "dist/.build-hash"
-    if not current(stamp, signature) or not (frontend / "dist/index.html").exists():
+    if not current(stamp, signature) or not (frontend / "dist/index.html").exists() or not (frontend / "dist/library.html").exists():
         print("构建界面…", flush=True)
         run([npm, "run", "build"], frontend)
         stamp.write_text(signature)

@@ -1,0 +1,37 @@
+services:
+  library:
+    build:
+      context: ..
+      dockerfile: deploy/library.Dockerfile
+    restart: unless-stopped
+    environment:
+      LIBRARY_DATA_DIR: /var/lib/zhixi-library
+      LIBRARY_COOKIE_SECURE: "true"
+      LIBRARY_PUBLIC_ORIGIN: https://${LIBRARY_DOMAIN:?请设置学习库域名}
+      LIBRARY_REGISTRATION_CODE: ${LIBRARY_REGISTRATION_CODE:-}
+    volumes:
+      - library_data:/var/lib/zhixi-library
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      LIBRARY_DOMAIN: ${LIBRARY_DOMAIN:?请设置学习库域名}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      library:
+        condition: service_healthy
+volumes:
+  library_data:
+  caddy_data:
+  caddy_config:
