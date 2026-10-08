@@ -3,6 +3,7 @@ import json
 from decimal import Decimal, ROUND_HALF_UP
 
 from .models import AnswerCheckInput
+from .choice_answers import MULTI_TYPES, canonical
 
 
 def normalize(value):
@@ -16,7 +17,10 @@ def normalize(value):
 
 
 def check(question, payload):
-    if question['type'] in ('choice','true_false'):
+    if question['type'] in MULTI_TYPES:
+        answers=[canonical(payload.answer)]
+        accepted=[[canonical(question['answer'],2 if question['type']=='multiple_choice' else 1)]]
+    elif question['type'] in ('choice','true_false'):
         answers=[payload.answer]
         accepted=[[question['answer']]]
     elif question['type']=='fill' and question['blanks']:

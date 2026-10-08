@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-QuestionType = Literal["choice", "true_false", "fill", "calculation", "proof"]
+QuestionType = Literal["choice", "multiple_choice", "indefinite_choice", "true_false", "fill", "calculation", "proof"]
 
 
 class LoginInput(BaseModel):
@@ -54,7 +54,7 @@ class ExamInput(BaseModel):
     course_id: str
     title: str = Field(min_length=1, max_length=100)
     ranges: list[SourceRange] = Field(min_length=1, max_length=10)
-    rules: list[TypeRule] = Field(min_length=1, max_length=5)
+    rules: list[TypeRule] = Field(min_length=1, max_length=7)
     mode: Literal["custom", "random", "reference"] = "custom"
     random_count: int = Field(default=10, ge=1, le=30)
     difficulty: Literal["基础巩固", "综合应用", "挑战题"] = "基础巩固"

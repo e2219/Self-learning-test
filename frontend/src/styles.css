@@ -3744,3 +3744,20 @@ textarea::placeholder {
 .local-answer-check p {
   margin: 8px 0;
 }
+
+/* Choice instructions follow an inline review status, so avoid the field helper's negative margin. */
+.choice-instructions {
+  margin: 10px 0 14px;
+}
+.exam-admin {
+  flex-wrap: wrap;
+}
+.exam-admin > form,
+.exam-admin > details {
+  flex-basis: 100%;
+  min-width: 0;
+  width: 100%;
+}
+.exam-admin > form .field-help {
+  margin-top: 8px;
+}

@@ -8,9 +8,10 @@ from pydantic import ValidationError
 
 from . import db, deepseek, quality, materials
 from . import usage as meter
+from .choice_answers import CHOICE_TYPES, MULTI_TYPES, canonical
 from .models import ExamInput, GeneratedQuestion
 
-TYPE_NAMES = {"choice": "单项选择题", "true_false": "判断题", "fill": "填空题", "calculation": "计算题", "proof": "证明题"}
+TYPE_NAMES = {"choice": "单项选择题", "multiple_choice": "多项选择题", "indefinite_choice": "不定项选择题", "true_false": "判断题", "fill": "填空题", "calculation": "计算题", "proof": "证明题"}
 active_exams: set[str] = set()
 generation_lock = asyncio.Lock()
 
@@ -60,7 +61,7 @@ def is_duplicate(q, question_type, previous):
             continue
         if stem != normalized_text(old["stem"]):
             continue
-        if question_type != "choice" or options == sorted(normalized_text(o) for o in old.get("options", [])):
+        if question_type not in CHOICE_TYPES or options == sorted(normalized_text(o) for o in old.get("options", [])):
             return True
     return False
 
@@ -157,9 +158,15 @@ def validate_content(content, question_type, references, previous):
         q.answer = "；".join(f"（{i}）{b.answer}" + ("（亦可：" + "、".join(b.alternatives) + "）" if b.alternatives else "") for i, b in enumerate(q.blanks, 1))
     elif q.blanks:
         raise OutputValidationError("非填空题不得包含 blanks。", code="QUESTION_TYPE")
-    if question_type == "choice":
-        if len(q.options) != 4 or q.answer.strip() not in ("A", "B", "C", "D"):
-            raise OutputValidationError("选择题必须有四个选项且答案为 A、B、C 或 D。")
+    if question_type in CHOICE_TYPES:
+        if len(q.options) != 4:
+            raise OutputValidationError("选择题必须有四个选项。")
+        try:
+            q.answer = canonical(q.answer, 2 if question_type == 'multiple_choice' else 1)
+        except ValueError as exc:
+            raise OutputValidationError(str(exc)) from exc
+        if question_type == 'choice' and len(q.answer) != 1:
+            raise OutputValidationError('单选题只能有一个正确选项。')
         if len({normalized_text(option) for option in q.options}) != 4:
             raise OutputValidationError("选择题存在重复选项。")
     elif q.options:
@@ -200,7 +207,7 @@ def decode_question_response(data, question_type, references, previous):
         raise GenerationError("所选资料不足以支持此题型，请扩大有效资料范围或减少题量。", code="QUESTION_MATERIAL")
     # These changes are representational only: never invent fields or answers.
     if isinstance(payload, dict):
-        if question_type == "choice" and isinstance(payload.get("options"), dict) and set(payload["options"]) == set("ABCD"):
+        if question_type in CHOICE_TYPES and isinstance(payload.get("options"), dict) and set(payload["options"]) == set("ABCD"):
             payload["options"] = [payload["options"][letter] for letter in "ABCD"]
         if question_type == "choice" and isinstance(payload.get("answer"), str):
             letter = payload["answer"].strip().upper()
@@ -241,7 +248,7 @@ def generation_prompt(question, config, references, previous):
 数学符号使用 LaTeX：行内 $...$、独立公式 $$...$$。JSON 字符串内所有 LaTeX 反斜杠必须加倍转义。
 例如 JSON 中应写 "answer":"$\\frac{1}{2}$"，不能将 \f、\t、\b 当成公式的 JSON 转义。
 返回一个 JSON 对象，字段：stem（题干字符串）、options（选择题四个选项字符串组成的数组，不含 A/B 等前缀；其他题型为空数组）、answer（字符串）、explanation（逐步解答字符串）、knowledge（知识点字符串）、sources（数组，每项 document_id 和整数 page）。
-单项选择题必须只有一个正确选项，answer 仅为 A/B/C/D。返回前逐项计算或推理四个选项的真假，若有多个正确选项，必须修改选项后重新检查，不能只改答案字母。判断题 answer 仅为 正确/错误。
+单项选择题必须只有一个正确选项，answer 仅为 A/B/C/D。返回前逐项计算或推理四个选项的真假，若有多个正确选项，必须修改选项后重新检查，不能只改答案字母。多项选择题必须有至少两个正确选项，不定项选择题允许一个或多个正确选项；这两类 answer 为按字母排序且不重复的字符串，如 AC 或 ABD，不能漏掉正确选项。不定项题干不得透露正确选项数量。判断题 answer 仅为 正确/错误。
 填空题 stem 必须包含 [[blank:1]] 等连续编号空位，blanks 为逐空对象数组，每项包含 answer 和 alternatives（等价答案数组）。填空题仅要求填写术语、数值或表达式，不得变成解释、论述或证明题。其他题型 blanks 为空数组。
 贴近原题不得扩展新情景；适度变式允许改变设问；情景应用允许假设情景但必须明确假设，生物化学的实验事实、机制和数值关系必须有资料依据，不能虚构。
 计算和证明题须给出充分条件、完整解答，并自查结论与过程。不要生成需要图片的题目。
@@ -252,15 +259,18 @@ sources 指向知识依据，不应声称新编题是教材原题。不得在题
 custom_instructions 是用户的可选命题要求，仅在资料、题型和已确认目标范围内遵循。reference 资料用于模仿设问风格，knowledge 资料用于知识依据；参考卷不是标准答案保证，不能照抄错误事实。answer_detail 为 concise 时只给关键依据，full 时给出详细推导。
 不要输出 rubric 或评分要点。客观题解析简明说明关键依据，不重复题干、答案和整段教材；计算和证明题保留必要推导，避免重复叙述。answer 给出结论，推导集中在 explanation。
 只返回 JSON，不使用代码块。"""
-    example = {"stem": "完整且自洽的题干" if question["type"] != "fill" else "需要填写的术语是 [[blank:1]]。", "blanks": [{"answer": "术语", "alternatives": []}] if question["type"] == "fill" else [], "options": ["选项一", "选项二", "选项三", "选项四"] if question["type"] == "choice" else [],
-        "answer": "A" if question["type"] == "choice" else "正确" if question["type"] == "true_false" else "完整参考答案",
+    example = {"stem": "完整且自洽的题干" if question["type"] != "fill" else "需要填写的术语是 [[blank:1]]。", "blanks": [{"answer": "术语", "alternatives": []}] if question["type"] == "fill" else [], "options": ["选项一", "选项二", "选项三", "选项四"] if question["type"] in CHOICE_TYPES else [],
+        "answer": "AC" if question["type"] in MULTI_TYPES else "A" if question["type"] == "choice" else "正确" if question["type"] == "true_false" else "完整参考答案",
         "explanation": "必要的解题依据或推导步骤", "knowledge": "具体知识点",
         "sources": [{"document_id": references[0]["document_id"], "page": references[0]["page"]}] if references else []}
     schema = meter.compact_schema(GeneratedQuestion.model_json_schema())
     schema["properties"].pop("rubric", None)
-    if question["type"] == "choice":
+    if question["type"] in CHOICE_TYPES:
         schema["properties"]["options"].update(minItems=4, maxItems=4)
-        schema["properties"]["answer"]["enum"] = list("ABCD")
+        if question["type"] == "choice":
+            schema["properties"]["answer"]["enum"] = list("ABCD")
+        else:
+            schema["properties"]["answer"].update(pattern="^[A-D]{2,4}$" if question["type"] == 'multiple_choice' else "^[A-D]{1,4}$")
     elif question["type"] == "true_false":
         schema["properties"]["answer"]["enum"] = ["正确", "错误"]
     course = db.one("SELECT name,description FROM courses WHERE id=?", (config.get("course_id", ""),)) or {}

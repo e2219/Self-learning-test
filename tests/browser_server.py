@@ -25,8 +25,8 @@ async def mock_generate(question, config, references, previous):
     return GeneratedQuestion(
         blanks=[{"answer":"$0.2$", "alternatives":[]}, {"answer":"0.5", "alternatives":[]}] if kind == "fill" else [],
         stem="独立事件 A、B 的交集概率为 [[blank:1]]，比例为 $v=[[blank:2]] V$。" if kind == "fill" else f"练习 {question['position']}：设事件 $A$ 与 $B$ 相互独立，且 $P(A)=0.4$，$P(B)=0.5$。求 $P(A\\cap B)$。",
-        options=["$0.2$", "$0.4$", "$0.5$", "$0.9$"] if kind == "choice" else [],
-        answer="A" if kind == "choice" else "正确" if kind == "true_false" else "$P(A\\cap B)=0.2$",
+        options=["$0.2$", "$0.4$", "$0.5$", "$0.9$"] if kind in ("choice", "multiple_choice", "indefinite_choice") else [],
+        answer="AC" if kind in ("multiple_choice", "indefinite_choice") else "A" if kind == "choice" else "正确" if kind == "true_false" else "$P(A\\cap B)=0.2$",
         explanation="由事件独立的定义，有：\n\n$$P(A\\cap B)=P(A)P(B)=0.4\\times0.5=0.2.$$\n\n注意独立与互斥的区别。此处两事件可以同时发生。",
         rubric=["正确写出独立事件的乘法公式。", "正确代入数值并计算。"],
         knowledge=r"事件独立性：$P(A\cap B)=P(A)P(B)$；泊松近似：$\binom{n}{k}p^k(1-p)^{n-k}\approx\frac{\lambda^k e^{-\lambda}}{k!}$，$\lambda=np$。",

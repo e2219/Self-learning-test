@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { api, date, json, useRemote } from './api';
 import type { Course, Exam, Question } from './types';
-import { typeNames } from './types';
+import { typeNames, isChoice, isMultiChoice, toggleChoice } from './types';
 import { Empty, Loading, MathText, Modal, Notice, PageHeading, Status } from './ui';
 
 export function Exams() {
@@ -193,7 +193,7 @@ function QuestionEditor({
             onChange={(e) => setForm({ ...form, stem: e.target.value })}
           />
         </label>
-        {question.type === 'choice' &&
+        {isChoice(question.type) &&
           form.options.map((o, i) => (
             <label key={i}>
               选项 {'ABCD'[i]}
@@ -234,7 +234,20 @@ function QuestionEditor({
         </div>
         <label>
           参考答案
-          {question.type === 'choice' ? (
+          {isMultiChoice(question.type) ? (
+            <span role="group" aria-label="标准答案选项">
+              {['A', 'B', 'C', 'D'].map((letter) => (
+                <label key={letter} className="inline-label">
+                  <input
+                    type="checkbox"
+                    checked={form.answer.includes(letter)}
+                    onChange={() => setForm({ ...form, answer: toggleChoice(form.answer, letter) })}
+                  />
+                  {letter}
+                </label>
+              ))}
+            </span>
+          ) : question.type === 'choice' ? (
             <select
               value={form.answer}
               onChange={(e) => setForm({ ...form, answer: e.target.value })}
@@ -516,6 +529,16 @@ export function QuestionCard({
         </div>
       ) : (
         <>
+          {isChoice(q.type) && (
+            <p className="field-help choice-instructions">
+              {q.type === 'choice'
+                ? '单选：只有一个正确选项。'
+                : q.type === 'multiple_choice'
+                  ? '多选：至少两个正确选项，点击可选中或取消。'
+                  : '不定项：一个或多个正确选项，点击可选中或取消。'}
+              保存作答后自动核分；全对得满分，漏选或错选不得分。
+            </p>
+          )}
           <MathText className="question-stem">{q.stem}</MathText>
           {q.options.length > 0 && (
             <div className="question-options">
@@ -523,10 +546,17 @@ export function QuestionCard({
                 <button
                   type="button"
                   key={i}
-                  className={`option ${practice && answer === 'ABCD'[i] ? 'chosen' : ''}`}
+                  className={`option ${practice && (isMultiChoice(q.type) ? answer.includes('ABCD'[i]) : answer === 'ABCD'[i]) ? 'chosen' : ''}`}
                   onClick={() => {
-                    if (practice && complete) setAnswer('ABCD'[i]);
+                    if (practice && complete)
+                      setAnswer(
+                        isMultiChoice(q.type) ? toggleChoice(answer, 'ABCD'[i]) : 'ABCD'[i],
+                      );
                   }}
+                  aria-pressed={
+                    practice &&
+                    (isMultiChoice(q.type) ? answer.includes('ABCD'[i]) : answer === 'ABCD'[i])
+                  }
                   disabled={!practice || !complete || saving}
                 >
                   <span>{'ABCD'[i]}</span>
@@ -582,7 +612,7 @@ export function QuestionCard({
                   </div>
                 </div>
               ) : (
-                q.type !== 'choice' && (
+                !isChoice(q.type) && (
                   <label>
                     我的作答 <span className="muted">（也可以写在纸上）</span>
                     <textarea
@@ -1088,7 +1118,7 @@ export function PrintPage() {
               </div>
             ) : (
               <div className={`writing-space writing-${q.type}`}>
-                {q.type === 'choice' || q.type === 'true_false' ? '作答：____________' : ''}
+                {isChoice(q.type) || q.type === 'true_false' ? '作答：____________' : ''}
               </div>
             )}
           </section>

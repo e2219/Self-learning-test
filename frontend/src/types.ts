@@ -29,9 +29,18 @@ export type Page = {
   table_issues: string[];
   text_hash: string;
 };
-export type QuestionType = 'choice' | 'true_false' | 'fill' | 'calculation' | 'proof';
+export type QuestionType =
+  | 'choice'
+  | 'multiple_choice'
+  | 'indefinite_choice'
+  | 'true_false'
+  | 'fill'
+  | 'calculation'
+  | 'proof';
 export const typeNames: Record<QuestionType, string> = {
-  choice: '选择题',
+  choice: '单选题',
+  multiple_choice: '多选题',
+  indefinite_choice: '不定项选择题',
   true_false: '判断题',
   fill: '填空题',
   calculation: '计算题',
@@ -143,3 +152,14 @@ export type ExamPlan = {
   blueprint: PlanSlot[];
   excluded: { name: string; page: number; reason: string }[];
 };
+
+export const isChoice = (type: QuestionType) =>
+  ['choice', 'multiple_choice', 'indefinite_choice'].includes(type);
+export const isMultiChoice = (type: QuestionType) =>
+  ['multiple_choice', 'indefinite_choice'].includes(type);
+export function toggleChoice(answer: string, option: string) {
+  const selected = new Set(answer.match(/[A-D]/gi)?.map((s) => s.toUpperCase()) || []);
+  if (selected.has(option)) selected.delete(option);
+  else selected.add(option);
+  return [...selected].sort().join('');
+}

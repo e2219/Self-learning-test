@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, usage, explanations
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
+from .choice_answers import MULTI_TYPES, canonical
 from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput, BudgetInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf, text_quality_issue, save_image_as_pdf
 
@@ -614,6 +615,8 @@ def progress(question_id: str, payload: ProgressInput):
             if values.get('user_answer') is None or 'self_score' in values or 'is_wrong' in values:
                 raise HTTPException(422, '自动评分需提交作答，不能同时指定分数或错题状态。')
             try:
+                if question['type'] in MULTI_TYPES:
+                    values['user_answer'] = canonical(values['user_answer'])
                 checked = answer_check.check_saved_answer(db.question(dict(question)), values['user_answer'])
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc

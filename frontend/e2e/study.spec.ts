@@ -43,7 +43,7 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
   await page.getByRole('link', { name: '生成测验', exact: true }).click();
   await page.getByLabel('试卷名称').fill('独立事件 · 第一章巩固练习');
   await page.locator('.scope-title input').check();
-  await page.getByLabel('选择题数量').fill('1');
+  await page.getByLabel('单选题数量').fill('1');
   await page.getByLabel('计算题数量').fill('1');
   await page.getByRole('button', { name: '预览检索片段' }).click();
   await expect(page.locator('.retrieval-snippet')).toContainText('事件独立性');
@@ -206,7 +206,7 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
   await page.getByRole('button', { name: '预览检索片段' }).click();
   await expect(page.locator('.retrieval-snippet')).toContainText('人工核对后的教材内容');
   await page.getByRole('button', { name: '关闭', exact: true }).click();
-  await page.getByLabel('选择题数量').fill('0');
+  await page.getByLabel('单选题数量').fill('0');
   await page.getByLabel('计算题数量').fill('1');
   await page.getByRole('button', { name: '生成考点分配表' }).click();
   await expect(page.getByLabel('第 1 题考点', { exact: true })).toBeVisible();
@@ -252,7 +252,7 @@ test('表格核对 → 局部识别草稿 → 调整考点 → 填空与打印',
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.goto(`/generate?course=${course.id}`);
   await page.locator('.scope-title input').check();
-  await page.getByLabel('选择题数量').fill('0');
+  await page.getByLabel('单选题数量').fill('0');
   await page.getByLabel('计算题数量').fill('0');
   await page.getByLabel('填空题数量').fill('1');
   await page.getByRole('button', { name: '生成考点分配表' }).click();
@@ -310,7 +310,7 @@ test('规划刷新恢复、草稿保存、资料变化提示及本地答案核�
   );
   await page.goto(`/generate?course=${course.id}`);
   await page.locator('.scope-title input').check();
-  await page.getByLabel('选择题数量').fill('1');
+  await page.getByLabel('单选题数量').fill('1');
   await page.getByLabel('判断题数量').fill('1');
   await page.getByLabel('填空题数量').fill('1');
   await page.getByLabel('计算题数量').fill('0');
@@ -459,4 +459,62 @@ test('图片往年卷 → 可选命题指令 → 参考题型分配 → 草稿�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+});
+
+test('多选与不定项选择 → 点击切换 → 保存自动评分 → 恢复与打印', async ({ page }, testInfo) => {
+  await page.request.post('/api/login', { data: { code: 'browser-test-only' } });
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '选择题细分测试' } })
+  ).json();
+  const pdf = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from tests.test_api import sample_pdf; import sys; sys.stdout.buffer.write(sample_pdf())',
+    ],
+    { cwd: '..' },
+  );
+  await page.request.post(`/api/courses/${course.id}/documents`, {
+    multipart: { file: { name: 'choices.pdf', mimeType: 'application/pdf', buffer: pdf } },
+  });
+  await page.goto(`/generate?course=${course.id}`);
+  await page.locator('.scope-title input').check();
+  await page.getByLabel('单选题数量', { exact: true }).fill('0');
+  await page.getByLabel('计算题数量', { exact: true }).fill('0');
+  await page.getByLabel('多选题数量', { exact: true }).fill('1');
+  await page.getByLabel('不定项选择题数量', { exact: true }).fill('1');
+  await page.getByRole('button', { name: '生成考点分配表', exact: true }).click();
+  await expect(page.getByLabel('第 1 题考点', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '确认分配并生成测验', exact: true }).click();
+  await expect(page.getByText('已生成 2 / 2 题')).toBeVisible();
+  const examUrl = page.url();
+  const card = page.locator('.question-card').first();
+  await expect(card.getByText('多选题', { exact: true })).toBeVisible();
+  await card.locator('.option').nth(2).click();
+  await card.locator('.option').nth(0).click();
+  await expect(card.locator('.option.chosen')).toHaveCount(2);
+  await card.getByRole('button', { name: '保存作答', exact: true }).click();
+  await expect(card.getByText('作答与评分已保存：5 / 5 分')).toBeVisible();
+  await page.reload();
+  await expect(card.locator('.option.chosen')).toHaveCount(2);
+  await card.locator('.option').nth(2).click();
+  await card.getByRole('button', { name: '保存作答', exact: true }).click();
+  await expect(card.getByText('作答与评分已保存：0 / 5 分')).toBeVisible();
+  const second = page.locator('.question-card').nth(1);
+  await expect(second.getByText('不定项选择题', { exact: true })).toBeVisible();
+  await second.locator('.option').nth(0).click();
+  await second.locator('.option').nth(2).click();
+  await second.getByRole('button', { name: '保存作答', exact: true }).click();
+  await expect(second.getByText('作答与评分已保存：5 / 5 分')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: testInfo.outputPath('multiple-choice-mobile.png'),
+    fullPage: true,
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.goto(examUrl + '/print?answers=1');
+  await expect(page.locator('.print-question')).toHaveCount(2);
+  await expect(page.locator('.print-solution').first()).toContainText('AC');
 });

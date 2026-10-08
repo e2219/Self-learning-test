@@ -1,4 +1,4 @@
-import type { Question } from './types';
+import { isChoice, type Question } from './types';
 export function parseBlankAnswers(answer: string, count: number) {
   try {
     const parsed = JSON.parse(answer);
@@ -31,7 +31,7 @@ export type AnswerCheckResult = {
 };
 export function supportsAutoScore(question: Question) {
   return (
-    question.type === 'choice' ||
+    isChoice(question.type) ||
     question.type === 'true_false' ||
     (question.type === 'fill' && !!question.blanks?.length)
   );
