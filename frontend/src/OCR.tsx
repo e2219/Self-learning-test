@@ -178,7 +178,8 @@ export function DocumentOCR({
         </button>
       </div>
       <p className="field-help">
-        使用 PDF 实际页序，每次最多 {max} 页。默认跳过已有文字或已识别的页面；手动修正始终保留。
+        使用 PDF 实际页序，每次最多 {max} 页。默认复用未发现明显异常的 PDF 文本或已有 OCR
+        结果；逐字断行等异常文本会识别，手动修正始终保留。
       </p>
       <label className="ocr-checkbox">
         <input
@@ -275,6 +276,32 @@ export function DocumentOCR({
       </div>
       {page.error && <Notice tone="error">{page.error}</Notice>}
       {page.data?.warning && <Notice>{page.data.warning}</Notice>}
+      {page.data && (
+        <Notice>
+          {page.data.text_source === 'manual'
+            ? '当前内容来自手动修正，自动识别不会覆盖。需要参考新识别结果时，可使用局部高清识别生成草稿。'
+            : page.data.text_source === 'ocr'
+              ? '当前内容来自已保存的 AI 图片识别结果；再次复用不会调用 API。'
+              : '当前内容来自 PDF 自带文本层，尚未通过 AI 图片识别；提取文本不消耗 tokens。'}
+          {page.data.text_quality_issue && <p>{page.data.text_quality_issue}</p>}
+          {page.data.text_source !== 'manual' && (
+            <button
+              className="button secondary"
+              disabled={busy || running(job) || !loaded || page.loading || !settings.data?.has_key}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `将第 ${number} 页图片发送给 DeepSeek 重新识别，按 API 用量计费；成功后替换此页文本，失败保留原内容。继续吗？`,
+                  )
+                )
+                  void act(`/documents/${doc.id}/ocr`, { start: number, end: number, force: true });
+              }}
+            >
+              仅重新识别当前页（调用 API）
+            </button>
+          )}
+        </Notice>
+      )}
       {page.data && !editing && (
         <MaterialQuality
           key={`${doc.id}-${number}`}
@@ -294,7 +321,7 @@ export function DocumentOCR({
         </div>
         <div>
           <div className="section-heading">
-            <h3>识别文本 {page.data?.edited ? '· 已修正' : ''}</h3>
+            <h3>页面文本 {page.data?.edited ? '· 已修正' : ''}</h3>
             {!editing && (
               <button
                 className="text-link"

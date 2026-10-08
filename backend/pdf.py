@@ -16,6 +16,20 @@ class PDFSizeError(PDFError):
     pass
 
 
+def text_quality_issue(text: str) -> str:
+    """Conservative signal for broken PDF text layers; never rewrite source text."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) >= 12 and sum(len(line) == 1 for line in lines) / len(lines) >= .6:
+        return "文本存在大量逐字断行，PDF 文本层可能异常。建议对照原页进行图片识别。"
+    if "�" in text:
+        return "文本含无法识别的字符，建议对照原页进行图片识别。"
+    return ""
+
+
+def reusable_pdf_text(text: str) -> bool:
+    return len(re.sub(r"\s+", "", text)) >= 40 and not text_quality_issue(text)
+
+
 def save_and_extract_pdf(source: BinaryIO, destination: Path):
     """Copy the spooled multipart upload in bounded chunks, then parse from disk.
 
@@ -60,8 +74,7 @@ def extract_pdf(stream: BinaryIO):
                 text = (page.extract_text() or "").replace("\x00", "")
                 text = re.sub(r"[ \t]+", " ", text).strip()[:50_000]
                 warning = "文本较少，可能是扫描页或图片页，可使用「文字与公式识别」或手动补充。" if len(text) < 40 else ""
-                if "�" in text:
-                    warning = "存在无法识别的字符，请检查公式和文字。"
+                warning = text_quality_issue(text) or warning
             except Exception:
                 text, warning = "", "此页文本提取失败，可以手动补充。"
             pages.append({"number": index, "text": text, "warning": warning})

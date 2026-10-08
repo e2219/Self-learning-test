@@ -181,6 +181,10 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
   await expect(modal.getByRole('button', { name: '第 1 页 · 复用已有内容' })).toBeVisible();
   await expect(modal.getByText('本任务累计 0 tokens')).toBeVisible();
   await expect(modal.getByText('复用已有内容，本次未调用 API')).toBeVisible();
+  await expect(modal.getByText(/当前内容来自已保存的 AI 图片识别结果/)).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await modal.getByRole('button', { name: '仅重新识别当前页（调用 API）', exact: true }).click();
+  await expect(modal.getByText('本任务累计 180 tokens')).toBeVisible();
   await modal.getByRole('button', { name: '修正此页内容' }).click();
   await modal
     .getByLabel('OCR 页面修正')
@@ -189,6 +193,8 @@ test('扫描 PDF → 按页 OCR → 原图校对 → 缓存复用 → 出题，�
     );
   await modal.getByRole('button', { name: '保存修正', exact: true }).click();
   await expect(modal.getByText('页面修正已保存。')).toBeVisible();
+  await expect(modal.getByText(/当前内容来自手动修正/)).toBeVisible();
+  await expect(modal.getByRole('button', { name: '仅重新识别当前页（调用 API）' })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('ocr-mobile.png'), fullPage: true });
   expect(await modal.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

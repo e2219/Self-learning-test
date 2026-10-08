@@ -283,3 +283,38 @@ def test_unexpected_error_reports_type_stage_without_raw_message(client, setup, 
     assert 'OCR_INTERNAL:RuntimeError' in job['pages'][0]['error']
     assert 'PRIVATE-API-KEY-IN-ERROR' not in str(job) + caplog.text
     assert 'RuntimeError' in caplog.text and 'stage=' in caplog.text
+
+@pytest.mark.parametrize('text,should_call', [
+    ('\n'.join('量词公式的基本等值式离散数学基础第一讲量词分配等值式' * 3), True),
+    ('坏掉的文字�' * 12, True),
+    ('\n' * 80 + '短文本', True),
+    (TEXT * 2, False),
+    ('\n'.join(['这是正常分行的课件正文。'] * 12), False),
+])
+def test_pdf_text_quality_controls_reuse(client, setup, monkeypatch, text, should_call):
+    doc_id = setup[1]['id']
+    db.execute('UPDATE pages SET text=?,edited=0,ocr_done=0 WHERE document_id=? AND number=1', (text, doc_id))
+    calls = []
+    async def mocked(image):
+        calls.append(image)
+        return ocr.OCRResult(text=TEXT), 42
+    monkeypatch.setattr(ocr, 'recognize_page', mocked)
+    page_url = f'/api/documents/{doc_id}/pages/1'
+    assert client.get(page_url).json()['text_source'] == 'pdf'
+    job_id = client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1}).json()['id']
+    job = client.get(f'/api/ocr/{job_id}').json()
+    assert len(calls) == int(should_call)
+    assert job['tokens'] == (42 if should_call else 0)
+    assert client.get(page_url).json()['text_source'] == ('ocr' if should_call else 'pdf')
+    if not should_call:
+        assert 'PDF 自带文本' in job['pages'][0]['error']
+    # Explicit single-page force must call even when text was reusable or OCR-cached.
+    client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1, 'force': True})
+    assert len(calls) == int(should_call) + 1
+    # Manual corrections stay protected, even if fragmented and forced.
+    manual = '\n'.join('人工修正内容需要保留' * 5)
+    client.put(page_url, json={'text': manual})
+    client.post(f'/api/documents/{doc_id}/ocr', json={'start': 1, 'end': 1, 'force': True})
+    assert len(calls) == int(should_call) + 1
+    assert client.get(page_url).json()['text_source'] == 'manual'
+    assert client.get(page_url).json()['text'] == manual

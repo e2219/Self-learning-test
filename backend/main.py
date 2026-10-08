@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput
-from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
+from .pdf import PDFError, PDFSizeError, save_and_extract_pdf, text_quality_issue
 
 
 @asynccontextmanager
@@ -223,7 +223,9 @@ def document_page(document_id: str, number: int):
     page = db.one("SELECT * FROM pages WHERE document_id=? AND number=?", (document_id, number))
     if not page:
         raise HTTPException(404, "页面不存在。")
-    return {**page, **materials.page_info(page)}
+    return {**page, **materials.page_info(page),
+            "text_source": "manual" if page["edited"] else "ocr" if page["ocr_done"] else "pdf",
+            "text_quality_issue": text_quality_issue(page["text"])}
 
 
 @api.put("/documents/{document_id}/pages/{number}")

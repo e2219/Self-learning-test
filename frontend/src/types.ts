@@ -17,6 +17,8 @@ export type Document = {
   outline: { title: string; page: number; depth: number }[];
 };
 export type Page = {
+  text_source?: 'manual' | 'ocr' | 'pdf';
+  text_quality_issue?: string;
   number: number;
   text: string;
   warning: string;

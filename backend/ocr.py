@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import db, deepseek
+from .pdf import reusable_pdf_text
 
 logger = logging.getLogger(__name__)
 _progress = ContextVar("ocr_progress", default=None)
@@ -225,8 +226,11 @@ async def run_job(job_id):
             page = db.one("SELECT * FROM pages WHERE document_id=? AND number=?", (doc_id, number))
             if not page:
                 break
-            if page["edited"] or (not job["force"] and (page["ocr_done"] or len(page["text"].strip()) >= 40)):
-                db.execute("UPDATE ocr_job_pages SET status='skipped',stage='cached',http_status=NULL,error='复用已有内容；手动修正始终保留。' WHERE job_id=? AND number=?", (job_id, number))
+            if page["edited"] or (not job["force"] and (page["ocr_done"] or reusable_pdf_text(page["text"]))):
+                reason = ("保留手动修正，本次未调用 API。" if page["edited"] else
+                          "复用已保存的 AI 识别结果，本次未调用 API。" if page["ocr_done"] else
+                          "复用 PDF 自带文本，本次未调用 API；内容不正确时请重新识别当前页。")
+                db.execute("UPDATE ocr_job_pages SET status='skipped',stage='cached',http_status=NULL,error=? WHERE job_id=? AND number=?", (reason, job_id, number))
                 continue
             db.execute("UPDATE ocr_job_pages SET status='running',error='' WHERE job_id=? AND number=?", (job_id, number))
             stage = "rendering"
