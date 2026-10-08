@@ -140,3 +140,65 @@ def test_check_endpoint_does_not_change_score_or_call_model(client,setup,monkeyp
     assert checked['all_match']
     assert db.one('SELECT self_score FROM questions WHERE id=?',(q['id'],))['self_score'] is None
     assert db.one('SELECT tokens FROM exams WHERE id=?',(exam['id'],))['tokens']==before
+
+
+@pytest.mark.parametrize('kind,standard,answer,expected', [
+    ('choice', 'A', 'A', 10), ('choice', 'A', 'B', 0),
+    ('true_false', '正确', '错误', 0), ('true_false', '正确', '正确', 10),
+    ('choice', 'A', '', None),
+])
+def test_save_answer_auto_scores_and_persists_without_model(client, setup, monkeypatch, kind, standard, answer, expected):
+    monkeypatch.setattr(generation, 'generate_one', fake_generate)
+    exam = client.post('/api/exams', json=exam_config(setup)).json()
+    q = client.get('/api/exams/'+exam['id']).json()['questions'][0]
+    db.execute('UPDATE questions SET type=?,answer=? WHERE id=?', (kind, standard, q['id']))
+    before = db.one('SELECT tokens FROM exams WHERE id=?', (exam['id'],))['tokens']
+    url = f"/api/questions/{q['id']}/progress"
+    saved = client.patch(url, json={'user_answer': answer, 'auto_score': True})
+    assert saved.status_code == 200
+    assert saved.json()['self_score'] == expected
+    assert saved.json()['is_wrong'] == (expected is not None and expected < 10)
+    assert db.one('SELECT self_score,user_answer FROM questions WHERE id=?', (q['id'],)) == {'self_score': expected, 'user_answer': answer}
+    count = len(client.get(f"/api/questions/{q['id']}/attempts").json())
+    assert count == int(expected is not None)
+    # Same-answer network retry must not append a second scoring record.
+    client.patch(url, json={'user_answer': answer, 'auto_score': True})
+    assert len(client.get(f"/api/questions/{q['id']}/attempts").json()) == count
+    client.patch(url, json={'is_favorite': True})
+    assert db.one('SELECT self_score FROM questions WHERE id=?', (q['id'],))['self_score'] == expected
+    assert db.one('SELECT tokens FROM exams WHERE id=?', (exam['id'],))['tokens'] == before
+
+
+def test_auto_fill_partial_empty_equivalents_and_manual_override(client, setup, monkeypatch):
+    monkeypatch.setattr(generation, 'generate_one', fake_generate)
+    exam = client.post('/api/exams', json=exam_config(setup)).json()
+    q = client.get('/api/exams/'+exam['id']).json()['questions'][0]
+    blanks = [{'answer':'1/2','alternatives':['0.5']}, {'answer':'p','alternatives':[]}, {'answer':'-1','alternatives':[]}]
+    db.execute("UPDATE questions SET type='fill',blanks=? WHERE id=?", (db.dump(blanks), q['id']))
+    url = f"/api/questions/{q['id']}/progress"
+    res = client.patch(url, json={'auto_score': True, 'user_answer': db.dump(['0.5','p',''])}).json()
+    assert res['self_score'] == 6.67 and res['is_wrong']
+    assert res['answer_check']['items'][2]['status'] == 'empty'
+    full = db.dump(['0.5','p','-1'])
+    res = client.patch(url, json={'auto_score': True, 'user_answer': full}).json()
+    assert res['self_score'] == 10 and not res['is_wrong']
+    assert client.patch(url, json={'self_score': 8}).json()['self_score'] == 8
+    assert client.patch(url, json={'auto_score': True, 'user_answer': full, 'self_score': 10}).status_code == 422
+    assert client.patch(url, json={'auto_score': True, 'user_answer': '旧整段答案'}).status_code == 422
+    assert db.one('SELECT self_score,user_answer FROM questions WHERE id=?', (q['id'],)) == {'self_score':8, 'user_answer':full}
+    cleared = client.patch(url, json={'user_answer':'', 'self_score':None}).json()
+    assert cleared['self_score'] is None and cleared['user_answer'] == ''
+    blank = client.patch(url, json={'auto_score':True,'user_answer': db.dump(['','',''])}).json()
+    assert blank['self_score'] is None
+    assert len(client.get(f"/api/questions/{q['id']}/attempts").json()) == 3
+
+
+def test_auto_score_rejects_unsupported_and_missing_answer(client, setup, monkeypatch):
+    monkeypatch.setattr(generation, 'generate_one', fake_generate)
+    exam = client.post('/api/exams', json=exam_config(setup)).json()
+    q = client.get('/api/exams/'+exam['id']).json()['questions'][0]
+    url = f"/api/questions/{q['id']}/progress"
+    assert client.patch(url, json={'auto_score':True}).status_code == 422
+    db.execute("UPDATE questions SET type='calculation' WHERE id=?", (q['id'],))
+    assert client.patch(url, json={'auto_score':True,'user_answer':'1'}).status_code == 422
+    assert client.patch(url, json={'user_answer':'1'}).json()['self_score'] is None

@@ -101,6 +101,7 @@ class QuestionEdit(GeneratedQuestion):
 
 
 class ProgressInput(BaseModel):
+    auto_score: bool = False
     user_answer: str | None = Field(default=None, max_length=20000)
     self_score: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     is_wrong: bool | None = None

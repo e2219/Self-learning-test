@@ -67,7 +67,7 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
   await expect(first.locator('.solution .katex').first()).toBeVisible();
   await first.getByRole('spinbutton', { name: '本题自评分', exact: true }).fill('3');
   await first.getByRole('button', { name: '保存评分' }).click();
-  await expect(first.getByText('自评 3 分')).toBeVisible();
+  await expect(first.getByText('得分 3 分')).toBeVisible();
   await first.getByRole('button', { name: '收藏题目', exact: true }).click();
   await expect(first.getByRole('button', { name: '取消收藏', exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('exam-desktop.png'), fullPage: true });
@@ -357,22 +357,30 @@ test('规划刷新恢复、草稿保存、资料变化提示及本地答案核�
   const questions = page.locator('.question-card');
   await expect(questions.nth(2).getByText(/以前保存的整段作答：旧作答/)).toBeVisible();
   await questions.nth(0).locator('.option').first().click();
-  await questions.nth(0).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await questions.nth(0).getByRole('button', { name: '保存作答' }).click();
   await expect(questions.nth(0).getByText('与参考答案一致', { exact: true })).toBeVisible();
   await questions.nth(1).getByRole('button', { name: '正确', exact: true }).click();
-  await questions.nth(1).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await questions.nth(1).getByRole('button', { name: '保存作答' }).click();
   await expect(questions.nth(1).getByText('与参考答案一致', { exact: true })).toBeVisible();
   await questions.nth(2).getByLabel('第 1 空答案').fill('0.2');
-  await questions.nth(2).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
+  await questions.nth(2).getByRole('button', { name: '保存作答' }).click();
   await expect(questions.nth(2).getByText('第 1 空：与参考答案一致')).toBeVisible();
   await expect(questions.nth(2).getByText('第 2 空：未作答')).toBeVisible();
+  await expect(questions.nth(2).getByText('得分 2.5 分')).toBeVisible();
   await questions.nth(2).getByLabel('第 2 空答案').fill('0.5');
-  await questions.nth(2).getByRole('button', { name: '检查答案（不调用 AI）' }).click();
-  await questions.nth(2).getByRole('button', { name: '采用建议分数' }).click();
-  await expect(questions.nth(2).getByLabel('本题自评分', { exact: true })).toHaveValue('5');
-  await questions.nth(2).getByRole('button', { name: '保存评分', exact: true }).click();
+  await questions.nth(2).getByRole('button', { name: '保存作答' }).click();
+  await expect(
+    questions.nth(2).getByText('作答与评分已保存：5 / 5 分', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '检查答案（不调用 AI）' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '采用建议分数' })).toHaveCount(0);
   await page.reload();
   await expect(questions.nth(2).getByLabel('第 1 空答案')).toHaveValue('0.2');
+  await expect(questions.nth(2).getByText('得分 5 分')).toBeVisible();
+  await questions.nth(2).getByRole('button', { name: '查看参考答案与解析' }).click();
+  await questions.nth(2).getByLabel('本题自评分', { exact: true }).fill('4');
+  await questions.nth(2).getByRole('button', { name: '保存评分', exact: true }).click();
+  await expect(questions.nth(2).getByText('得分 4 分')).toBeVisible();
   await page.goto(`/generate?course=${course.id}`);
   await page.getByRole('button', { name: '继续上次规划' }).click();
   await expect(page.getByRole('link', { name: '查看已生成试卷' })).toHaveAttribute(

@@ -563,23 +563,41 @@ def check_answer(question_id: str, payload: AnswerCheckInput):
 
 @api.patch("/questions/{question_id}/progress")
 def progress(question_id: str, payload: ProgressInput):
-    question = required("questions", question_id)
-    if question["status"] != "ready":
-        raise HTTPException(409, "请等待此题生成完成后再作答。")
     values = payload.model_dump(exclude_unset=True)
-    if "self_score" in values and values["self_score"] is not None:
-        if values["self_score"] > question["points"]:
-            raise HTTPException(422, "自评分不能超过本题分值。")
-        if "is_wrong" not in values:
-            values["is_wrong"] = values["self_score"] < question["points"]
-    values = {k: v for k, v in values.items() if v is not None or k == "self_score"}
+    auto_score = values.pop('auto_score', False)
+    checked = None
     with db.connection() as con:
-        if values.get("self_score") is not None:
-            con.execute("INSERT INTO attempts(id,question_id,user_answer,score,snapshot) VALUES (?,?,?,?,?)",
-                (uuid.uuid4().hex, question_id, values.get("user_answer", question["user_answer"]), values["self_score"], db.dump(db.question(dict(question)))))
+        con.execute('BEGIN IMMEDIATE')
+        row = con.execute('SELECT * FROM questions WHERE id=?', (question_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, '题目不存在。')
+        question = dict(row)
+        if question['status'] != 'ready':
+            raise HTTPException(409, '请等待此题生成完成后再作答。')
+        if auto_score:
+            if values.get('user_answer') is None or 'self_score' in values or 'is_wrong' in values:
+                raise HTTPException(422, '自动评分需提交作答，不能同时指定分数或错题状态。')
+            try:
+                checked = answer_check.check_saved_answer(db.question(dict(question)), values['user_answer'])
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            # An entirely blank answer is saved as ungraded, not a zero-point attempt.
+            values['self_score'] = checked['suggested_score'] if any(item['status'] != 'empty' for item in checked['items']) else None
+        if values.get('self_score') is not None:
+            if values['self_score'] > question['points']:
+                raise HTTPException(422, '自评分不能超过本题分值。')
+            if 'is_wrong' not in values:
+                values['is_wrong'] = values['self_score'] < question['points']
+        values = {k: v for k, v in values.items() if v is not None or k == 'self_score'}
+        unchanged_auto_score = auto_score and values.get('user_answer') == question['user_answer'] and values.get('self_score') == question['self_score']
+        if values.get('self_score') is not None and not unchanged_auto_score:
+            con.execute('INSERT INTO attempts(id,question_id,user_answer,score,snapshot) VALUES (?,?,?,?,?)',
+                (uuid.uuid4().hex, question_id, values.get('user_answer', question['user_answer']), values['self_score'], db.dump(db.question(dict(question)))))
         if values:
             con.execute(f"UPDATE questions SET {','.join(k+'=?' for k in values)} WHERE id=?", (*values.values(), question_id))
-    return db.question(required("questions", question_id))
+        saved = db.question(dict(con.execute('SELECT * FROM questions WHERE id=?', (question_id,)).fetchone()))
+    return {**saved, 'answer_check': checked}
+
 
 
 @api.get("/questions/{question_id}/attempts")

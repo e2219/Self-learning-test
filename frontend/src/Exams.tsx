@@ -1,10 +1,12 @@
 import {
-  AnswerCheck,
+  SavedAnswerResult,
+  supportsAutoScore,
+  type AnswerCheckResult,
   parseBlankAnswers,
   isStructuredAnswer,
   displaySavedAnswer,
 } from './AnswerCheck';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -359,6 +361,16 @@ export function QuestionCard({
     [saving, setSaving] = useState(false),
     [editing, setEditing] = useState(false),
     [history, setHistory] = useState(false);
+  const savingRef = useRef(false);
+  const [savedCheck, setSavedCheck] = useState<{
+    answer: string;
+    result: AnswerCheckResult;
+    score: number | null;
+  } | null>(null);
+  const autoScore = supportsAutoScore(q);
+  useEffect(() => {
+    setSavedCheck(null);
+  }, [q.id, q.stem, q.answer, q.points]);
   useEffect(() => {
     setAnswer(q.user_answer);
   }, [q.id, q.user_answer]);
@@ -369,16 +381,32 @@ export function QuestionCard({
     setRevealed(false);
   }, [q.stem]);
   async function save(payload: Record<string, unknown>) {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setError('');
     setMessage('');
     try {
-      await api(`/questions/${q.id}/progress`, json('PATCH', payload));
-      setMessage('已保存');
-      onChange();
+      const saved = await api<Question & { answer_check?: AnswerCheckResult }>(
+        `/questions/${q.id}/progress`,
+        json('PATCH', payload),
+      );
+      if (saved.answer_check) {
+        setSavedCheck({
+          answer: saved.user_answer,
+          result: saved.answer_check,
+          score: saved.self_score,
+        });
+        setScore(saved.self_score === null ? '' : String(saved.self_score));
+      } else if ('self_score' in payload || 'user_answer' in payload) {
+        setSavedCheck(null);
+      }
+      setMessage(saved.answer_check ? '' : '已保存');
+      await onChange();
     } catch (err) {
       setError((err as Error).message);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -391,7 +419,7 @@ export function QuestionCard({
           <span className="badge type-badge">{typeNames[q.type]}</span>
           <span className="question-points">{q.points} 分</span>
           {q.self_score !== null && (
-            <span className="badge score-badge">自评 {q.self_score} 分</span>
+            <span className="badge score-badge">得分 {q.self_score} 分</span>
           )}
         </div>
         <div className="question-tools">
@@ -503,7 +531,7 @@ export function QuestionCard({
                   onClick={() => {
                     if (practice && complete) setAnswer('ABCD'[i]);
                   }}
-                  disabled={!practice || !complete}
+                  disabled={!practice || !complete || saving}
                 >
                   <span>{'ABCD'[i]}</span>
                   <MathText>{option}</MathText>
@@ -524,6 +552,7 @@ export function QuestionCard({
                     <button
                       key={v}
                       className={`button ${answer === v ? 'primary' : 'secondary'}`}
+                      disabled={saving}
                       onClick={() => setAnswer(v)}
                     >
                       {v}
@@ -543,6 +572,7 @@ export function QuestionCard({
                       <label key={i}>
                         第 {i + 1} 空
                         <input
+                          disabled={saving}
                           aria-label={`第 ${i + 1} 空答案`}
                           value={parseBlankAnswers(answer, q.blanks!.length)[i]}
                           onChange={(e) => {
@@ -568,14 +598,6 @@ export function QuestionCard({
                   </label>
                 )
               )}
-              <AnswerCheck
-                question={q}
-                answer={answer}
-                apply={(value) => {
-                  setScore(String(value));
-                  setRevealed(true);
-                }}
-              />
               <div className="answer-actions">
                 {(q.self_score !== null || q.user_answer) && (
                   <button
@@ -593,13 +615,22 @@ export function QuestionCard({
                 <button
                   className="button secondary small"
                   disabled={saving}
-                  onClick={() => void save({ user_answer: answer })}
+                  onClick={() => void save({ user_answer: answer, auto_score: autoScore })}
                 >
                   <Save size={14} />
                   保存作答
                 </button>
-                <span className="field-help">仅点击保存后记录到本机</span>
+                <span className="field-help">
+                  {autoScore ? '保存后自动核验并记录分数，不调用 AI' : '仅点击保存后记录到本机'}
+                </span>
               </div>
+              {savedCheck && savedCheck.answer === answer && (
+                <SavedAnswerResult
+                  question={q}
+                  result={savedCheck.result}
+                  score={savedCheck.score}
+                />
+              )}
             </div>
           )}
           {complete && (
@@ -647,6 +678,7 @@ export function QuestionCard({
                       <label>
                         本题自评分
                         <input
+                          disabled={saving}
                           aria-label="本题自评分"
                           type="number"
                           min={0}

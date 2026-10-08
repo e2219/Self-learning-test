@@ -1,5 +1,8 @@
 """Literal answer matching only; no model calls or symbolic equivalence guesses."""
+import json
 from decimal import Decimal, ROUND_HALF_UP
+
+from .models import AnswerCheckInput
 
 
 def normalize(value):
@@ -28,3 +31,18 @@ def check(question, payload):
     return {'items':[{'number':i+1,'status':s} for i,s in enumerate(statuses)],'suggested_score':score,
         'all_answered':'empty' not in statuses,'all_match':all(s=='match' for s in statuses),
         'message':'仅核对与标准答案及已列等价答案是否一致，不验证标准答案本身。未作答单独标记，可人工修改评分。'}
+
+
+def check_saved_answer(question, answer):
+    blanks = []
+    if question['type'] == 'fill' and question['blanks']:
+        if not answer.strip():
+            blanks = [''] * len(question['blanks'])
+        else:
+            try:
+                blanks = json.loads(answer)
+            except (ValueError, TypeError) as exc:
+                raise ValueError('请按空位填写答案后保存；旧版整段作答仍保留。') from exc
+            if not isinstance(blanks, list) or not all(isinstance(item, str) for item in blanks):
+                raise ValueError('请按空位填写答案后保存。')
+    return check(question, AnswerCheckInput(answer=answer, blanks=blanks))
