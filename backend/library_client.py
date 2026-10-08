@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from urllib.parse import urlsplit
 
 import httpx
@@ -15,6 +16,19 @@ from . import db, security, share
 router = APIRouter(prefix='/api/library', dependencies=[Depends(security.require_auth)])
 LIMIT = 3 * 1024 * 1024
 COOKIE = 'zhixi_library_session'
+LOCAL_SERVER = 'local'
+_builtin_lock = threading.Lock()
+_builtin_path = None
+
+
+def initialize_builtin():
+    from .library import store
+    global _builtin_path
+    path = store.DATA_DIR / 'library.sqlite3'
+    with _builtin_lock:
+        if _builtin_path != path or not path.exists():
+            store.initialize()
+            _builtin_path = path
 
 
 def session_key(request):
@@ -40,14 +54,24 @@ def normalize_server(value):
 def connection(request):
     row = db.one('SELECT server,token FROM library_connections WHERE session_hash=?', (session_key(request),))
     if not row:
-        raise HTTPException(409, '请先连接共享学习库服务器。')
+        server = normalize_server(os.environ['LIBRARY_SERVER_URL']) if os.environ.get('LIBRARY_SERVER_URL') else LOCAL_SERVER
+        db.execute("INSERT OR IGNORE INTO library_connections VALUES (?,?,'')", (session_key(request), server))
+        row = db.one('SELECT server,token FROM library_connections WHERE session_hash=?', (session_key(request),))
     return row
 
 
 async def remote(server, token, method, path, body=None, query=''):
+    # Built-in service uses in-process ASGI, never an extra port or network connection.
+    options = {}
+    if server == LOCAL_SERVER:
+        from .library.main import app as library_app
+        from starlette.concurrency import run_in_threadpool
+        await run_in_threadpool(initialize_builtin)
+        options['transport'] = httpx.ASGITransport(app=library_app)
+        server = 'https://builtin-library.invalid'
     # No browser cookies, local API keys, proxy credentials, or redirect following.
     try:
-        async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=False, **options) as client:
             headers = {'Cookie': f'{COOKIE}={token}'} if token else {}
             async with client.stream(method, server+'/api/'+path, params=query, json=body, headers=headers) as response:
                 chunks, size = [], 0
@@ -76,13 +100,13 @@ class ConnectionInput(BaseModel):
 
 @router.get('/connection')
 def get_connection(request: Request):
-    row = db.one('SELECT server FROM library_connections WHERE session_hash=?', (session_key(request),))
-    return {'server': row['server'] if row else os.environ.get('LIBRARY_SERVER_URL', ''), 'connected': bool(row)}
+    row = connection(request)
+    return {'server': row['server'], 'connected': True}
 
 
 @router.put('/connection')
 async def set_connection(payload: ConnectionInput, request: Request):
-    server = normalize_server(payload.server)
+    server = LOCAL_SERVER if payload.server == LOCAL_SERVER else normalize_server(payload.server)
     health, _ = await remote(server, '', 'GET', 'health')
     if not isinstance(health, dict) or health.get('service') != 'shared-library' or health.get('integration_version', 0) < 1:
         raise HTTPException(422, '此地址不是兼容的共享学习库服务，请更新共享服务器到最新版。')

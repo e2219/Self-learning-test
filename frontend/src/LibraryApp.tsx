@@ -215,7 +215,7 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
         const config = await localApi<{ server: string; connected: boolean }>(
           '/library/connection',
         );
-        setServer(config.server);
+        setServer(config.server === 'local' ? '' : config.server);
         setActiveServer(config.server);
         setConnected(config.connected);
         if (!config.connected) return;
@@ -225,7 +225,8 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
         setLibraries(await api('/libraries'));
         await resumeLink();
       } catch (e) {
-        if (embedded) setError((e as Error).message);
+        if (embedded && (e as Error).message !== '请先登录共享学习库。')
+          setError((e as Error).message);
       }
     }
     initialize()
@@ -265,53 +266,87 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
       </header>
       <Content className="library-content">
         {embedded && (
-          <details className="panel" open={!connected}>
-            <summary>共享服务器连接</summary>
-            <p>
-              输入部署后的共享学习库网址。本机测试可填
-              http://127.0.0.1:8001；手机也通过电脑后台连接。
-            </p>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void act(async () => {
-                  const config = await localApi<{ server: string }>(
-                    '/library/connection',
-                    json('PUT', { server }),
-                  );
-                  setActiveServer(config.server);
-                  setServer(config.server);
-                  setConnected(true);
-                  setUser(null);
-                  setLibrary(null);
-                  setPost(null);
-                  setPack(null);
-                  setInvite('');
-                  setCreatedPassword('');
-                  try {
-                    setUser(await api<User>('/me'));
-                    await home();
-                  } catch {
-                    /* New connection requires its own account. */
+          <>
+            <Notice>
+              {activeServer === 'local'
+                ? '本机学习库已就绪，无需填写服务器地址或额外启动服务。资料保存在这台电脑上。'
+                : '当前使用远程学习库。远程服务不可用时，可切换到本机学习库；已有远程资料会保留。'}
+              {activeServer !== 'local' && (
+                <button
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      await localApi('/library/connection', json('PUT', { server: 'local' }));
+                      setActiveServer('local');
+                      setConnected(true);
+                      setUser(null);
+                      setLibrary(null);
+                      setPost(null);
+                      setPack(null);
+                      setInvite('');
+                      setCreatedPassword('');
+                      try {
+                        setUser(await api<User>('/me'));
+                        await home();
+                      } catch {
+                        /* Sign in to the local account. */
+                      }
+                    })
                   }
-                });
-              }}
-            >
-              <label>
-                共享服务器地址
-                <input
-                  type="url"
-                  required
-                  value={server}
-                  onChange={(e) => setServer(e.target.value)}
-                  placeholder="https://study.example.com"
-                />
-              </label>
-              <button className="button secondary" disabled={busy}>
-                连接服务器
-              </button>
-            </form>
-          </details>
+                >
+                  使用本机学习库
+                </button>
+              )}
+            </Notice>
+            <details className="panel">
+              <summary>连接远程学习库（可选）</summary>
+              <p>
+                输入部署后的共享学习库网址。本机测试可填
+                http://127.0.0.1:8001；手机也通过电脑后台连接。
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void act(async () => {
+                    const config = await localApi<{ server: string }>(
+                      '/library/connection',
+                      json('PUT', { server }),
+                    );
+                    setActiveServer(config.server);
+                    setServer(config.server === 'local' ? '' : config.server);
+                    setConnected(true);
+                    setUser(null);
+                    setLibrary(null);
+                    setPost(null);
+                    setPack(null);
+                    setInvite('');
+                    setCreatedPassword('');
+                    try {
+                      setUser(await api<User>('/me'));
+                      await home();
+                    } catch {
+                      /* New connection requires its own account. */
+                    }
+                  });
+                }}
+              >
+                <label>
+                  共享服务器地址
+                  <input
+                    type="url"
+                    required
+                    value={server}
+                    onChange={(e) => setServer(e.target.value)}
+                    placeholder="https://study.example.com"
+                  />
+                </label>
+                <button className="button secondary" disabled={busy}>
+                  连接服务器
+                </button>
+              </form>
+            </details>
+          </>
         )}
         {error && <Notice tone="error">{error}</Notice>}
         {!loaded ? (
@@ -322,7 +357,11 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
           <section className="panel library-auth">
             <span className="eyebrow">STUDY TOGETHER</span>
             <h1>{register ? '创建个人账号' : '欢迎回到学习库'}</h1>
-            <p>用自己的共享账号登录，再通过库编号和入库密码加入同学的学习库。</p>
+            <p>
+              {embedded && activeServer === 'local'
+                ? '注册或登录本机学习库账号。数据保存在当前电脑，不同电脑的本机库不会自动同步。'
+                : '用当前服务的共享账号登录，再通过库编号和入库密码加入同学的学习库。'}
+            </p>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -793,18 +832,26 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
                     </div>
                     <details className="panel" key="members">
                       <summary>成员与邀请码</summary>
-                      <label>
-                        邀请链接
-                        <input
-                          aria-label="邀请链接"
-                          readOnly
-                          value={`${embedded ? activeServer : window.location.origin}/?library=${library.id}`}
-                          onFocus={(e) => e.target.select()}
-                        />
-                      </label>
-                      <p className="field-help">
-                        将邀请链接与入库密码分别发给同学，链接不包含密码。
-                      </p>
+                      {embedded && activeServer === 'local' ? (
+                        <p>
+                          此库保存在本机。库编号和密码不会自动使它在其他电脑上可见；互联网共享请使用远程学习库。
+                        </p>
+                      ) : (
+                        <label>
+                          邀请链接
+                          <input
+                            aria-label="邀请链接"
+                            readOnly
+                            value={`${embedded ? activeServer : window.location.origin}/?library=${library.id}`}
+                            onFocus={(e) => e.target.select()}
+                          />
+                        </label>
+                      )}
+                      {(!embedded || activeServer !== 'local') && (
+                        <p className="field-help">
+                          将邀请链接与入库密码分别发给同学，链接不包含密码。
+                        </p>
+                      )}
                       {canManage && (
                         <form
                           onSubmit={(e) => {

@@ -274,6 +274,7 @@ test('侧边栏学习库：历史试卷直接分享、密码加入、直接导�
   await expect(
     page.locator('.sidebar').getByRole('link', { name: '学习库', exact: true }),
   ).toHaveClass(/active/);
+  await page.getByText('连接远程学习库（可选）', { exact: true }).click();
   await page.getByLabel('共享服务器地址').fill('http://127.0.0.1:8124');
   await page.getByRole('button', { name: '连接服务器', exact: true }).click();
   await page.getByRole('button', { name: '还没有账号，去注册' }).click();

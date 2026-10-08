@@ -10,6 +10,8 @@ from pathlib import Path
 os.environ["STUDY_ACCESS_CODE"] = "browser-test-only"
 os.environ["DEEPSEEK_API_KEY"] = "mock-provider-for-browser-tests"
 os.environ["STUDY_DATA_DIR"] = tempfile.mkdtemp(prefix="zhixi-e2e-")
+os.environ["LIBRARY_DATA_DIR"] = tempfile.mkdtemp(prefix="zhixi-builtin-e2e-")
+os.environ.pop("LIBRARY_SERVER_URL", None)
 
 from backend import generation  # noqa: E402
 from backend.main import app  # noqa: E402, F401

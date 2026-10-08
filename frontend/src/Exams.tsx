@@ -1224,7 +1224,9 @@ function SharedSource({ source }: { source: NonNullable<Exam['config']['shared_s
         来源：{source.author} · 学习库 {source.library_name || source.library_id} · 版本{' '}
         {source.revision}
       </p>
-      <p className="field-help">共享服务器：{source.server}</p>
+      <p className="field-help">
+        来源位置：{source.server === 'local' ? '本机学习库' : source.server}
+      </p>
       <button
         className="button secondary"
         disabled={busy}

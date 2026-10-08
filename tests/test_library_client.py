@@ -17,12 +17,13 @@ def bridge(tmp_path, monkeypatch):
     monkeypatch.setattr(db, 'DATA_DIR', tmp_path/'personal')
     monkeypatch.setattr(store, 'DATA_DIR', tmp_path/'cloud')
     monkeypatch.setenv('STUDY_ACCESS_CODE', 'test-access-123')
+    monkeypatch.delenv('LIBRARY_SERVER_URL', raising=False)
     monkeypatch.setenv('LIBRARY_COOKIE_SECURE', 'false')
     monkeypatch.delenv('LIBRARY_PUBLIC_ORIGIN', raising=False)
     monkeypatch.delenv('LIBRARY_REGISTRATION_CODE', raising=False)
     security.failures.clear()
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(library_client.httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.ASGITransport(app=cloud_app), **kw))
+    monkeypatch.setattr(library_client.httpx, 'AsyncClient', lambda **kw: real_client(**{'transport':httpx.ASGITransport(app=cloud_app), **kw}))
     with TestClient(cloud_app) as cloud, TestClient(app) as local:
         assert local.post('/api/login', json={'code':'test-access-123'}).status_code == 200
         yield local, cloud
@@ -54,12 +55,12 @@ def test_bridge_session_isolation_logout_and_filtered_paths(bridge):
     local.cookies.clear()
     assert local.get('/api/library/remote/me').status_code == 401
     local.post('/api/login', json={'code':'test-access-123'})
-    assert local.get('/api/library/connection').json()['connected'] is False
-    assert local.get('/api/library/remote/me').status_code == 409
+    assert local.get('/api/library/connection').json() == {'server':'local','connected':True}
+    assert local.get('/api/library/remote/me').status_code == 424
     local.cookies.clear(); local.cookies.set('study_session',cookie)
     assert local.get('/api/library/remote/me').status_code == 200
     local.post('/api/logout')
-    assert db.one('SELECT * FROM library_connections') is None
+    assert db.one('SELECT * FROM library_connections WHERE session_hash=?', (library_client.hashlib.sha256(cookie.encode()).hexdigest(),)) is None
 
 
 @pytest.mark.parametrize('server', ['http://example.com', 'https://user:secret@example.com','https://example.com/path', 'https://example.com?token=bad', 'file:///tmp/test'])
@@ -177,3 +178,44 @@ def test_concurrent_import_retries_create_one_exam(bridge):
     assert len({r.json()['id'] for r in responses}) == 1
     assert len(local.get('/api/exams').json()) == 1
     assert local.get('/api/library/remote/libraries/'+lib['id']+'/posts?search=creator').json()[0]['id'] == post_id
+
+
+def test_builtin_requires_no_connection_or_network_and_preserves_library(bridge, monkeypatch):
+    local, _ = bridge
+    factory = library_client.httpx.AsyncClient
+    transports = []
+    def offline_client(**kwargs):
+        assert isinstance(kwargs.get('transport'), httpx.ASGITransport)
+        transports.append(kwargs['transport'])
+        return factory(**kwargs)
+    monkeypatch.setattr(library_client.httpx, 'AsyncClient', offline_client)
+    # Production defaults require secure cookies on the standalone service; internal use still works.
+    monkeypatch.delenv('LIBRARY_COOKIE_SECURE', raising=False)
+    assert local.get('/api/library/connection').json() == {'server':'local','connected':True}
+    login_shared(local,'builtin_student')
+    lib=local.post('/api/library/remote/libraries',json={'name':'本机库','access_password':'builtin-password'}).json()
+    posted=local.post('/api/library/remote/libraries/'+lib['id']+'/posts',json={'pack':pack(),'submission_id':'builtin-publish'}).json()
+    imported=local.post('/api/library/imports',json={'post_id':posted['id'],'revision':1,'submission_id':'builtin-import'}).json()
+    assert local.get('/api/exams/'+imported['id']).json()['config']['shared_source']['server'] == 'local'
+    local.post('/api/logout')
+    local.post('/api/login',json={'code':'test-access-123'})
+    assert local.post('/api/library/remote/login',json={'username':'builtin_student','password':'student-password'}).status_code == 200
+    assert local.get('/api/library/remote/libraries').json()[0]['id'] == lib['id']
+    assert transports
+
+
+def test_unavailable_remote_kept_until_explicit_local_switch(bridge, monkeypatch):
+    from fastapi import HTTPException
+    local, _ = bridge
+    connect(local)
+    original = library_client.remote
+    async def unavailable(server, *args, **kwargs):
+        if server != 'local':
+            raise HTTPException(502,'remote unavailable')
+        return await original(server, *args, **kwargs)
+    monkeypatch.setattr(library_client,'remote',unavailable)
+    assert local.get('/api/library/remote/me').status_code == 502
+    assert local.get('/api/library/connection').json()['server'] == 'http://127.0.0.1:8001'
+    assert local.put('/api/library/connection',json={'server':'local'}).status_code == 200
+    login_shared(local,'offline_student')
+    assert local.get('/api/library/remote/me').json()['username'] == 'offline_student'

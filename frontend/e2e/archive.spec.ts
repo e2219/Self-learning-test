@@ -118,5 +118,5 @@ test('历史试卷卡片完整包裹内容，桌面与手机打开和分享入�
   await page.screenshot({ path: info.outputPath('archive-mobile.png'), fullPage: true });
   await page.getByRole('link', { name: '分享到学习库', exact: true }).first().click();
   await expect(page).toHaveURL(/\/library\?share=[a-f0-9]+$/);
-  await expect(page.getByLabel('共享服务器地址')).toBeVisible();
+  await expect(page.getByText('本机学习库已就绪', { exact: false })).toBeVisible();
 });
