@@ -30,14 +30,6 @@ def init_db():
         con.executescript("""
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires REAL NOT NULL);
-        CREATE TABLE IF NOT EXISTS library_connections (
-            session_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
-            server TEXT NOT NULL, token TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS library_imports (
-            key TEXT PRIMARY KEY, exam_id TEXT NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
-            request_hash TEXT NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS courses (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))

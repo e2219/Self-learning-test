@@ -5,7 +5,6 @@ export default defineConfig({
   server: { proxy: { '/api': 'http://127.0.0.1:8000' } },
   build: {
     rollupOptions: {
-      input: { main: 'index.html', library: 'library.html' },
       output: {
         manualChunks: {
           math: ['katex', 'react-markdown', 'remark-math', 'rehype-katex'],

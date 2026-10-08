@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, share
+from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf
@@ -473,49 +473,6 @@ def get_exam(exam_id: str):
     return exam_detail(exam_id)
 
 
-@api.get('/exams/{exam_id}/share')
-def export_exam(exam_id: str):
-    exam = exam_detail(exam_id)
-    questions = [q for q in exam['questions'] if q['status'] == 'ready']
-    try:
-        pack = share.export_pack(exam['title'], exam['course_name'], questions)
-    except ValueError as exc:
-        raise HTTPException(422, '没有可导出的完整题目，或题目结构需先修正。') from exc
-    return JSONResponse(pack.model_dump(), headers={'Content-Disposition':'attachment; filename="zhixi-exam.json"'})
-
-
-@api.get('/questions/{question_id}/share')
-def export_question(question_id: str):
-    question = db.question(required('questions', question_id))
-    exam = required('exams', question['exam_id'])
-    course = required('courses', exam['course_id'])
-    if question['status'] != 'ready':
-        raise HTTPException(422, '只能导出已完成题目。')
-    try:
-        pack = share.export_pack(exam['title'][:90]+' · 单题', course['name'], [question], 'mistakes')
-    except ValueError as exc:
-        raise HTTPException(422, '题目结构需先修正才能分享。') from exc
-    return JSONResponse(pack.model_dump(), headers={'Content-Disposition':'attachment; filename="zhixi-question.json"'})
-
-
-@api.get('/review/share')
-def export_review(course_id: str = '', mode: str = 'wrong'):
-    condition = 'q.is_favorite=1' if mode == 'favorites' else 'q.is_wrong=1'
-    rows = db.rows(f"""SELECT q.* FROM questions q JOIN exams e ON q.exam_id=e.id
-        WHERE {condition} AND q.status='ready' AND (?='' OR e.course_id=?) ORDER BY e.created_at DESC,q.position LIMIT 30""", (course_id,course_id))
-    course = required('courses', course_id)['name'] if course_id else '综合复习'
-    try:
-        pack = share.export_pack('收藏练习' if mode == 'favorites' else '错题练习', course, [db.question(q) for q in rows], 'mistakes')
-    except ValueError as exc:
-        raise HTTPException(422, '没有可导出的完整题目，或题目结构需先修正。') from exc
-    return JSONResponse(pack.model_dump(), headers={'Content-Disposition':'attachment; filename="zhixi-review.json"'})
-
-
-@api.post('/imports/study-pack', status_code=201)
-def import_study_pack(pack: share.StudyPack):
-    return exam_detail(share.import_pack(pack))
-
-
 @api.post("/exams/{exam_id}/pause")
 async def pause_exam(exam_id: str):
     required("exams", exam_id)
@@ -526,8 +483,6 @@ async def pause_exam(exam_id: str):
 @api.post("/exams/{exam_id}/retry")
 async def retry_exam(exam_id: str, background: BackgroundTasks):
     exam = ensure_idle(exam_id)
-    if json.loads(exam['config']).get('imported'):
-        raise HTTPException(422, '共享试卷未附原教材，不能重新生成；请在个人资料库选择教材另行出题。')
     if not security.api_key():
         raise HTTPException(422, "请先配置 DeepSeek API Key。")
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
@@ -551,8 +506,6 @@ def delete_exam(exam_id: str):
 async def regenerate(question_id: str, background: BackgroundTasks):
     question = required("questions", question_id)
     exam = ensure_idle(question["exam_id"])
-    if json.loads(exam['config']).get('imported'):
-        raise HTTPException(422, '共享题目未附原教材，不能重新生成。')
     if not security.api_key():
         raise HTTPException(422, "请先配置 DeepSeek API Key。")
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
@@ -661,8 +614,6 @@ def review(course_id: str = "", mode: str = "wrong"):
         WHERE {condition} AND (?='' OR e.course_id=?) ORDER BY e.created_at DESC,q.position""", (course_id, course_id))]
 
 
-from .library_client import router as library_router
-app.include_router(library_router)
 app.include_router(api)
 
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

@@ -61,15 +61,6 @@ export type Question = {
 };
 export type SourceRange = { document_id: string; start: number; end: number };
 export type ExamConfig = {
-  imported?: boolean;
-  shared_source?: {
-    server: string;
-    library_id: string;
-    library_name?: string;
-    post_id: string;
-    author: string;
-    revision: number;
-  };
   course_id: string;
   title: string;
   ranges: SourceRange[];

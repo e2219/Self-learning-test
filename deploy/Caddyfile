@@ -1,7 +1,0 @@
-{$LIBRARY_DOMAIN} {
-    request_body {
-        max_size 3MB
-    }
-    reverse_proxy library:8001
-    header Strict-Transport-Security "max-age=31536000"
-}

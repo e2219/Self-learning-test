@@ -14,5 +14,6 @@ test-results/
 *.tsbuildinfo
 .DS_Store
 
+# Keep retired shared-library data and backups out of Git.
 library-data/
 backups/
