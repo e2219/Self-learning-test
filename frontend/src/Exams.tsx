@@ -123,8 +123,8 @@ export function Exams() {
       ) : filtered?.length ? (
         <div className="exam-grid">
           {filtered.map((e) => (
-            <div key={e.id}>
-              <Link className="exam-card" to={`/exams/${e.id}`}>
+            <article className="exam-card" key={e.id}>
+              <Link className="exam-card-main" to={`/exams/${e.id}`}>
                 <div className="exam-card-top">
                   <div className="document-icon">
                     <FileText size={24} />
@@ -149,11 +149,14 @@ export function Exams() {
                 </div>
               </Link>
               {(e.ready_count ?? 0) > 0 && (
-                <Link className="button secondary" to={`/library?share=${e.id}`}>
-                  分享到学习库
-                </Link>
+                <div className="exam-card-actions">
+                  <Link className="button secondary" to={`/library?share=${e.id}`}>
+                    <Share2 size={15} />
+                    分享到学习库
+                  </Link>
+                </div>
               )}
-            </div>
+            </article>
           ))}
         </div>
       ) : (

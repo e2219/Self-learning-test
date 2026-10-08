@@ -1682,11 +1682,31 @@ textarea::placeholder {
   gap: 18px;
 }
 .exam-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 23px 23px 0;
   transition: transform 0.15s;
+}
+.exam-card-main {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+.exam-card-actions {
+  padding: 0 0 18px;
+}
+.exam-card-actions .button {
+  max-width: 100%;
+  white-space: normal;
+}
+.exam-card-main:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 5px;
+  border-radius: 4px;
 }
 .exam-card:hover {
   transform: translateY(-3px);
@@ -1698,7 +1718,8 @@ textarea::placeholder {
   justify-content: space-between;
   margin-bottom: 23px;
 }
-.exam-card > .eyebrow {
+.exam-card-main > .eyebrow {
+  overflow-wrap: anywhere;
   font-size: 9px;
   letter-spacing: 1px;
   color: #9baa8c;
