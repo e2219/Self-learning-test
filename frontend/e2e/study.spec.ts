@@ -570,3 +570,89 @@ test('看图仿题跳过 OCR → 本地任务表 → 刷新恢复 → 原图来�
   expect((await (await page.request.get(`/api/documents/${doc.id}/pages/1`)).json()).text).toBe('');
   expect(await (await page.request.get(`/api/documents/${doc.id}/ocr`)).json()).toBeNull();
 });
+
+test('列表删除：取消保留、失败提示、删卷保留资料、删课程级联清理', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await page.getByLabel('访问口令').fill('browser-test-only');
+  await page.getByRole('button', { name: '开始学习', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '今天，也学得更扎实一点。' })).toBeVisible();
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '删除入口测试' } })
+  ).json();
+  const pdf = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from tests.test_api import sample_pdf; import sys; sys.stdout.buffer.write(sample_pdf())',
+    ],
+    { cwd: '..' },
+  );
+  const doc = await (
+    await page.request.post(`/api/courses/${course.id}/documents`, {
+      multipart: { file: { name: '删除测试.pdf', mimeType: 'application/pdf', buffer: pdf } },
+    })
+  ).json();
+  const config = {
+    course_id: course.id,
+    title: '错误生成结果',
+    ranges: [{ document_id: doc.id, start: 1, end: 1 }],
+    rules: [{ type: 'choice', count: 1, points: 5 }],
+  };
+  const exam = await (await page.request.post('/api/exams', { data: config })).json();
+  expect(exam.id).toBeTruthy();
+  await expect
+    .poll(async () => (await (await page.request.get(`/api/exams/${exam.id}`)).json()).status)
+    .toBe('ready');
+  const second = await (
+    await page.request.post('/api/exams', { data: { ...config, title: '课程内另一份卷' } })
+  ).json();
+  expect(second.id).toBeTruthy();
+  await expect
+    .poll(async () => (await (await page.request.get(`/api/exams/${second.id}`)).json()).status)
+    .toBe('ready');
+  await page.goto('/exams');
+  await page.getByLabel('筛选课程').selectOption(course.id);
+  const button = page.getByRole('button', { name: '删除试卷：错误生成结果', exact: true });
+  await expect(button).toBeVisible();
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('保留课程和原始资料');
+    await dialog.dismiss();
+  });
+  await button.click();
+  await expect(button).toBeVisible();
+  await expect(page).toHaveURL(/\/exams$/);
+  await page.route(`**/api/exams/${exam.id}`, async (route) => {
+    if (route.request().method() === 'DELETE')
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: '试卷正在生成，请稍后再删除。' }),
+      });
+    else await route.continue();
+  });
+  page.once('dialog', (dialog) => dialog.accept());
+  await button.click();
+  await expect(page.getByText('试卷正在生成，请稍后再删除。', { exact: true })).toBeVisible();
+  await expect(button).toBeEnabled();
+  await page.unroute(`**/api/exams/${exam.id}`);
+  await page.screenshot({ path: testInfo.outputPath('exam-delete-desktop.png'), fullPage: true });
+  page.once('dialog', (dialog) => dialog.accept());
+  await button.click();
+  await expect(button).toHaveCount(0);
+  expect((await page.request.get(`/api/documents/${doc.id}/file`)).status()).toBe(200);
+  await page.goto('/courses');
+  const removeCourse = page.getByRole('button', { name: '删除课程：删除入口测试', exact: true });
+  await expect(removeCourse).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('course-delete-mobile.png'), fullPage: true });
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('资料');
+    await dialog.accept();
+  });
+  await removeCourse.click();
+  await expect(removeCourse).toHaveCount(0);
+  await expect(page).toHaveURL(/\/courses$/);
+  expect((await page.request.get(`/api/exams/${second.id}`)).status()).toBe(404);
+  expect((await page.request.get(`/api/documents/${doc.id}/file`)).status()).toBe(404);
+});

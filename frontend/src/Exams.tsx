@@ -1,3 +1,4 @@
+import { DeleteAction } from './DeleteAction';
 import { UsageBreakdown } from './Usage';
 import {
   SavedAnswerResult,
@@ -38,6 +39,7 @@ import { typeNames, isChoice, isMultiChoice, toggleChoice } from './types';
 import { Empty, Loading, MathText, Modal, Notice, PageHeading, Status } from './ui';
 
 export function Exams() {
+  const [deleteError, setDeleteError] = useState('');
   const courses = useRemote<Course[]>('/courses');
   const [courseId, setCourseId] = useState(''),
     [search, setSearch] = useState('');
@@ -80,36 +82,57 @@ export function Exams() {
         </select>
         <span>{filtered?.length || 0} 份试卷</span>
       </div>
-      {exams.error && <Notice tone="error">{exams.error}</Notice>}
+      {(deleteError || exams.error) && <Notice tone="error">{deleteError || exams.error}</Notice>}
       {exams.loading ? (
         <Loading />
       ) : filtered?.length ? (
         <div className="exam-grid">
           {filtered.map((e) => (
-            <Link className="exam-card" to={`/exams/${e.id}`} key={e.id}>
-              <div className="exam-card-top">
-                <div className="document-icon">
-                  <FileText size={24} />
+            <article className="exam-card managed-card" key={e.id}>
+              <Link className="card-open" to={`/exams/${e.id}`}>
+                <div className="exam-card-top">
+                  <div className="document-icon">
+                    <FileText size={24} />
+                  </div>
+                  <Status status={e.status} />
                 </div>
-                <Status status={e.status} />
+                <span className="eyebrow">{e.course_name}</span>
+                <h3>{e.title}</h3>
+                <div className="exam-card-details">
+                  <span>{e.question_count} 道题</span>
+                  <span>{e.total_points} 分</span>
+                  <span>{date(e.created_at)}</span>
+                </div>
+                <div className="exam-card-footer">
+                  <span>
+                    {e.ready_count}/{e.question_count} 题已生成
+                  </span>
+                  <span>
+                    打开试卷
+                    <ArrowRight size={15} />
+                  </span>
+                </div>
+              </Link>
+              <div className="card-actions">
+                <DeleteAction
+                  path={`/exams/${e.id}`}
+                  label="删除试卷"
+                  name={e.title}
+                  warning="将删除本卷题目及相关作答、评分、错题和收藏记录，保留课程和原始资料。"
+                  disabled={['queued', 'generating'].includes(e.status)}
+                  failed={setDeleteError}
+                  deleted={async () => {
+                    exams.setData(
+                      (previous) => previous?.filter((item) => item.id !== e.id) ?? null,
+                    );
+                    await exams.reload();
+                  }}
+                />
+                {['queued', 'generating'].includes(e.status) && (
+                  <small className="muted">请先打开试卷暂停生成</small>
+                )}
               </div>
-              <span className="eyebrow">{e.course_name}</span>
-              <h3>{e.title}</h3>
-              <div className="exam-card-details">
-                <span>{e.question_count} 道题</span>
-                <span>{e.total_points} 分</span>
-                <span>{date(e.created_at)}</span>
-              </div>
-              <div className="exam-card-footer">
-                <span>
-                  {e.ready_count}/{e.question_count} 题已生成
-                </span>
-                <span>
-                  打开试卷
-                  <ArrowRight size={15} />
-                </span>
-              </div>
-            </Link>
+            </article>
           ))}
         </div>
       ) : (

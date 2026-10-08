@@ -1,3 +1,4 @@
+import { DeleteAction } from './DeleteAction';
 import { MaterialQuality } from './MaterialQuality';
 import { useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -25,24 +26,48 @@ import { api, date, json, upload as uploadFile, useRemote } from './api';
 import type { Course, Document, Exam, Page, Settings } from './types';
 import { Empty, Loading, MathText, Modal, Notice, PageHeading, SectionHeading, Status } from './ui';
 
-function CourseCard({ course, index }: { course: Course; index: number }) {
+function CourseCard({
+  course,
+  index,
+  deleted,
+  failed,
+}: {
+  course: Course;
+  index: number;
+  deleted?: () => Promise<void>;
+  failed?: (message: string) => void;
+}) {
   const symbols = ['∑', 'P', '∀', '∫'];
   return (
-    <Link className={`course-card color-${index % 4}`} to={`/courses/${course.id}`}>
-      <div className="course-card-top">
-        <div className="course-symbol">{symbols[index % 4]}</div>
-        <ArrowRight size={18} />
-      </div>
-      <h3>{course.name}</h3>
-      <p>{course.description || '从教材开始，建立你的练习与复习空间。'}</p>
-      <div className="course-meta">
-        <span>
-          <FileText size={14} />
-          {course.document_count} 份资料
-        </span>
-        <span>{course.exam_count} 份试卷</span>
-      </div>
-    </Link>
+    <article className={`course-card managed-card color-${index % 4}`}>
+      <Link className="card-open" to={`/courses/${course.id}`}>
+        <div className="course-card-top">
+          <div className="course-symbol">{symbols[index % 4]}</div>
+          <ArrowRight size={18} />
+        </div>
+        <h3>{course.name}</h3>
+        <p>{course.description || '从教材开始，建立你的练习与复习空间。'}</p>
+        <div className="course-meta">
+          <span>
+            <FileText size={14} />
+            {course.document_count} 份资料
+          </span>
+          <span>{course.exam_count} 份试卷</span>
+        </div>
+      </Link>
+      {deleted && failed && (
+        <div className="card-actions">
+          <DeleteAction
+            path={`/courses/${course.id}`}
+            label="删除课程"
+            name={course.name}
+            warning={`将同时删除这门课程的 ${course.document_count} 份资料、${course.exam_count} 份试卷，以及作答、评分、错题和收藏记录。`}
+            deleted={deleted}
+            failed={failed}
+          />
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -229,7 +254,8 @@ export function Dashboard() {
 }
 
 export function Courses() {
-  const { data, error, loading, reload } = useRemote<Course[]>('/courses');
+  const { data, error, loading, reload, setData } = useRemote<Course[]>('/courses');
+  const [deleteError, setDeleteError] = useState('');
   const [show, setShow] = useState(false),
     [name, setName] = useState(''),
     [description, setDescription] = useState(''),
@@ -249,13 +275,22 @@ export function Courses() {
           </button>
         }
       />
-      {error && <Notice tone="error">{error}</Notice>}
+      {(deleteError || error) && <Notice tone="error">{deleteError || error}</Notice>}
       {loading ? (
         <Loading />
       ) : data?.length ? (
         <div className="course-grid">
           {data.map((c, i) => (
-            <CourseCard key={c.id} course={c} index={i} />
+            <CourseCard
+              key={c.id}
+              course={c}
+              index={i}
+              failed={setDeleteError}
+              deleted={async () => {
+                setData((previous) => previous?.filter((item) => item.id !== c.id) ?? null);
+                await reload();
+              }}
+            />
           ))}
         </div>
       ) : (

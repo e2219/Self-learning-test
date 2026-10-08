@@ -162,6 +162,9 @@ def edit_course(course_id: str, payload: CourseInput):
 @api.delete("/courses/{course_id}")
 def delete_course(course_id: str):
     required("courses", course_id)
+    for plan in db.rows("SELECT id,status FROM exam_plans WHERE course_id=?", (course_id,)):
+        if plan['status'] in ('queued', 'running') or plan['id'] in planning.active_plans:
+            raise HTTPException(409, "这门课程正在规划，请停止规划并等待当前调用结束后再删除。")
     for exam in db.rows("SELECT id FROM exams WHERE course_id=?", (course_id,)):
         ensure_idle(exam["id"])
     docs = db.rows("SELECT id FROM documents WHERE course_id=?", (course_id,))

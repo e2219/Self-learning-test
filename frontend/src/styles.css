@@ -1694,7 +1694,7 @@ textarea::placeholder {
   justify-content: space-between;
   margin-bottom: 23px;
 }
-.exam-card > .eyebrow {
+.exam-card .eyebrow {
   font-size: 9px;
   letter-spacing: 1px;
   color: #9baa8c;
@@ -3767,4 +3767,30 @@ textarea::placeholder {
   max-width: 100%;
   height: auto;
   margin: 12px auto;
+}
+
+.managed-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.card-open {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+}
+.card-open:focus-visible {
+  outline: 2px solid var(--accent, #315d50);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0 14px;
+  border-top: 1px solid var(--line);
 }
