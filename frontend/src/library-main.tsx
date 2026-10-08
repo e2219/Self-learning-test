@@ -11,12 +11,20 @@ import 'katex/dist/katex.min.css';
 import './styles.css';
 import './library.css';
 
+const roleNames: Record<string, string> = {
+  owner: '创建者',
+  admin: '管理员',
+  member: '普通成员',
+  removed: '已移除',
+};
+
 type User = { id: string; username: string; nickname: string };
 type Library = {
   id: string;
   name: string;
   description: string;
   owner_id: string;
+  role: 'owner' | 'admin' | 'member';
   post_count?: number;
   members?: { id: string; nickname: string; role: string }[];
 };
@@ -138,7 +146,8 @@ function LibraryApp() {
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, []);
-  const owner = user && library?.owner_id === user.id;
+  const owner = !!user && library?.owner_id === user.id;
+  const canManage = owner || library?.role === 'admin';
   return (
     <div className="library-shell">
       <header className="library-header">
@@ -285,7 +294,9 @@ function LibraryApp() {
               <Notice>
                 <strong>学习库邀请码：</strong>
                 <code className="invite-code">{invite}</code>
-                <p>请复制保存并发给同学。仅显示这一次；管理员可以更换邀请码，旧码随即失效。</p>
+                <p>
+                  请复制保存并发给同学。仅显示这一次；创建者和管理员可以更换邀请码，旧码随即失效。
+                </p>
               </Notice>
             )}
             {!library ? (
@@ -380,7 +391,7 @@ function LibraryApp() {
                       <h3>{lib.name}</h3>
                       <p>{lib.description || '共同整理课程练习'}</p>
                       <span>
-                        {lib.post_count} 份内容 · {lib.owner_id === user.id ? '我管理的' : '已加入'}
+                        {lib.post_count} 份内容 · {roleNames[lib.role]}
                       </span>
                     </button>
                   ))}
@@ -432,7 +443,7 @@ function LibraryApp() {
                 <p>
                   {post
                     ? `${post.author} · ${post.pack.course} · 版本 ${post.view_revision}`
-                    : library.description}
+                    : `${library.description} · 我的角色：${roleNames[library.role]}`}
                 </p>
                 {!post ? (
                   <>
@@ -549,7 +560,7 @@ function LibraryApp() {
                     </div>
                     <details className="panel">
                       <summary>成员与邀请码</summary>
-                      {owner && (
+                      {canManage && (
                         <button
                           className="button secondary"
                           disabled={busy}
@@ -570,42 +581,69 @@ function LibraryApp() {
                           更换邀请码
                         </button>
                       )}
+                      <p className="field-help">
+                        所有成员均可查看、下载和上传。创建者任免管理员；管理员可删除发布、移除或恢复普通成员。
+                      </p>
                       {library.members
-                        ?.filter((member) => owner || member.role !== 'removed')
+                        ?.filter((member) => canManage || member.role !== 'removed')
                         .map((member) => (
                           <div className="library-member" key={member.id}>
                             <span>
-                              {member.nickname} ·{' '}
-                              {member.role === 'owner'
-                                ? '管理员'
-                                : member.role === 'removed'
-                                  ? '已移除'
-                                  : '成员'}
+                              {member.nickname} · {roleNames[member.role]}
                             </span>
-                            {owner && member.role !== 'owner' && (
-                              <button
-                                className="text-link"
-                                disabled={busy}
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      member.role === 'removed'
-                                        ? '恢复该成员的访问权限？'
-                                        : '移除后此成员无法查看或上传库内内容。继续吗？',
+                            <div className="button-group">
+                              {owner && ['member', 'admin'].includes(member.role) && (
+                                <button
+                                  className="text-link"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    const role = member.role === 'admin' ? 'member' : 'admin';
+                                    if (
+                                      window.confirm(
+                                        role === 'admin'
+                                          ? `将 ${member.nickname} 设为管理员？管理员可以删除试卷、管理普通成员和更换邀请码。`
+                                          : `取消 ${member.nickname} 的管理员权限？`,
+                                      )
                                     )
-                                  )
-                                    void act(async () => {
-                                      await api(
-                                        `/libraries/${library.id}/members/${member.id}?role=${member.role === 'removed' ? 'member' : 'removed'}`,
-                                        json('PUT'),
-                                      );
-                                      await openLibrary(library.id);
-                                    });
-                                }}
-                              >
-                                {member.role === 'removed' ? '恢复成员' : '移除成员'}
-                              </button>
-                            )}
+                                      void act(async () => {
+                                        await api(
+                                          `/libraries/${library.id}/members/${member.id}?role=${role}`,
+                                          json('PUT'),
+                                        );
+                                        await openLibrary(library.id);
+                                      });
+                                  }}
+                                >
+                                  {member.role === 'admin' ? '取消管理员' : '设为管理员'}
+                                </button>
+                              )}
+                              {canManage &&
+                                member.role !== 'owner' &&
+                                (owner || member.role !== 'admin') && (
+                                  <button
+                                    className="text-link"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      if (
+                                        window.confirm(
+                                          member.role === 'removed'
+                                            ? '恢复该成员为普通成员？'
+                                            : '移除后此成员无法查看或上传库内内容。继续吗？',
+                                        )
+                                      )
+                                        void act(async () => {
+                                          await api(
+                                            `/libraries/${library.id}/members/${member.id}?role=${member.role === 'removed' ? 'member' : 'removed'}`,
+                                            json('PUT'),
+                                          );
+                                          await openLibrary(library.id);
+                                        });
+                                    }}
+                                  >
+                                    {member.role === 'removed' ? '恢复成员' : '移除成员'}
+                                  </button>
+                                )}
+                            </div>
                           </div>
                         ))}
                     </details>
@@ -635,7 +673,7 @@ function LibraryApp() {
                       >
                         {post.favorite ? '取消收藏' : '收藏内容'}
                       </button>
-                      {(post.author_id === user.id || owner) && (
+                      {(post.author_id === user.id || canManage) && (
                         <button
                           className="button ghost"
                           disabled={busy}

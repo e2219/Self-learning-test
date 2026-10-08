@@ -126,3 +126,116 @@ test('个人导出 → 邀请成员 → 分享修订 → 下载导入，个人�
   await peerContext.close();
   await local.close();
 });
+
+test('创建者任免管理员，管理员维护内容和成员，普通成员保留分享权限', async ({ page, browser }) => {
+  await register(page, 'role_owner');
+  const lib = await (
+    await page.request.post('/api/libraries', {
+      data: { name: '三级权限学习库', description: '成员共同维护' },
+    })
+  ).json();
+  const adminContext = await browser.newContext();
+  const memberContext = await browser.newContext();
+  const admin = await adminContext.newPage();
+  const member = await memberContext.newPage();
+  await register(admin, 'role_admin');
+  await register(member, 'role_member');
+  for (const participant of [admin, member]) {
+    await participant.getByLabel('学习库邀请码', { exact: true }).fill(lib.invite_code);
+    await participant.getByRole('button', { name: '加入学习库', exact: true }).click();
+    await expect(participant.getByRole('heading', { name: '三级权限学习库' })).toBeVisible();
+  }
+  const pack = {
+    format: 'zhixi-study-pack',
+    version: 1,
+    kind: 'exam',
+    title: '成员分享的试卷',
+    course: '概率论',
+    questions: [
+      {
+        type: 'choice',
+        points: 5,
+        stem: '概率的最大值是多少？',
+        options: ['1', '2', '3', '4'],
+        answer: 'A',
+        explanation: '概率不超过 1。',
+        knowledge: '概率范围',
+        rubric: [],
+        blanks: [],
+      },
+    ],
+  };
+  const posted = await member.request.post(`/api/libraries/${lib.id}/posts`, {
+    data: { pack, submission_id: 'role-member-upload', note: '' },
+  });
+  expect(posted.status()).toBe(201);
+  const post = await posted.json();
+  expect((await admin.request.get(`/api/posts/${post.id}/download`)).status()).toBe(200);
+  await page.reload();
+  await page.getByRole('button', { name: /三级权限学习库/ }).click();
+  await page.getByText('成员与邀请码', { exact: true }).click();
+  const adminRow = page.locator('.library-member').filter({ hasText: 'role_admin' });
+  page.once('dialog', (dialog) => dialog.accept());
+  await adminRow.getByRole('button', { name: '设为管理员', exact: true }).click();
+  await expect(adminRow.getByText('role_admin · 管理员', { exact: true })).toBeVisible();
+  await admin.reload();
+  await admin.getByRole('button', { name: /三级权限学习库/ }).click();
+  await expect(admin.getByText(/我的角色：管理员/)).toBeVisible();
+  await admin.getByText('成员与邀请码', { exact: true }).click();
+  await expect(admin.getByRole('button', { name: '更换邀请码' })).toBeVisible();
+  await expect(admin.getByRole('button', { name: '设为管理员', exact: true })).toHaveCount(0);
+  await expect(
+    admin.locator('.library-member').filter({ hasText: 'role_owner' }).getByRole('button'),
+  ).toHaveCount(0);
+  await expect(
+    admin.locator('.library-member').filter({ hasText: 'role_admin' }).getByRole('button'),
+  ).toHaveCount(0);
+  await admin.getByRole('button', { name: /成员分享的试卷/ }).click();
+  admin.once('dialog', (dialog) => dialog.accept());
+  await admin.getByRole('button', { name: '删除发布', exact: true }).click();
+  await expect(admin.getByRole('button', { name: /成员分享的试卷/ })).toHaveCount(0);
+  await admin.getByText('成员与邀请码', { exact: true }).click();
+  admin.once('dialog', (dialog) => dialog.accept());
+  await admin
+    .locator('.library-member')
+    .filter({ hasText: 'role_member' })
+    .getByRole('button', { name: '移除成员' })
+    .click();
+  await expect(
+    admin
+      .locator('.library-member')
+      .filter({ hasText: 'role_member' })
+      .getByText('role_member · 已移除', { exact: true }),
+  ).toBeVisible();
+  expect((await member.request.get(`/api/libraries/${lib.id}`)).status()).toBe(404);
+  admin.once('dialog', (dialog) => dialog.accept());
+  await admin
+    .locator('.library-member')
+    .filter({ hasText: 'role_member' })
+    .getByRole('button', { name: '恢复成员' })
+    .click();
+  await expect(
+    admin
+      .locator('.library-member')
+      .filter({ hasText: 'role_member' })
+      .getByText('role_member · 普通成员', { exact: true }),
+  ).toBeVisible();
+  expect((await member.request.get(`/api/libraries/${lib.id}`)).status()).toBe(200);
+  page.once('dialog', (dialog) => dialog.accept());
+  await adminRow.getByRole('button', { name: '取消管理员' }).click();
+  await expect(adminRow.getByText('role_admin · 普通成员', { exact: true })).toBeVisible();
+  // Existing login and stale UI cannot retain the revoked privilege.
+  expect((await admin.request.post(`/api/libraries/${lib.id}/invite`)).status()).toBe(403);
+  await admin.reload();
+  await admin.getByRole('button', { name: /三级权限学习库/ }).click();
+  await admin.getByText('成员与邀请码', { exact: true }).click();
+  await expect(admin.getByRole('button', { name: '更换邀请码' })).toHaveCount(0);
+  await expect(admin.getByRole('button', { name: '移除成员' })).toHaveCount(0);
+  await expect(admin.getByLabel('选择试卷包')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+    true,
+  );
+  await adminContext.close();
+  await memberContext.close();
+});

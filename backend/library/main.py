@@ -92,14 +92,17 @@ def current_user(request: Request):
     return dict(row)
 
 
-def membership(con, library_id, user, owner=False):
+def membership(con, library_id, user, manage=False):
     lib = con.execute('SELECT * FROM libraries WHERE id=?', (library_id,)).fetchone()
     member = con.execute('SELECT role FROM members WHERE library_id=? AND user_id=?', (library_id, user['id'])).fetchone()
     if not lib or not member or member['role'] == 'removed':
         raise HTTPException(404, '学习库不存在或你尚未加入。')
-    if owner and lib['owner_id'] != user['id']:
-        raise HTTPException(403, '只有学习库管理员可以执行此操作。')
-    return lib
+    role = 'owner' if lib['owner_id'] == user['id'] else member['role']
+    if role not in ('owner', 'admin', 'member'):
+        raise HTTPException(403, '成员角色无效，请联系创建者。')
+    if manage and role not in ('owner', 'admin'):
+        raise HTTPException(403, '只有学习库创建者或管理员可以执行此操作。')
+    return {**dict(lib), 'role': role}
 
 
 def access_post(con, post_id, user, edit=False):
@@ -265,7 +268,7 @@ def library_detail(library_id: str, user=Depends(current_user)):
     with store.connection() as con:
         lib = membership(con, library_id, user)
         members = [dict(r) for r in con.execute('SELECT u.id,u.nickname,m.role FROM members m JOIN users u ON u.id=m.user_id WHERE m.library_id=? ORDER BY m.role,u.nickname', (library_id,))]
-        return {'id':lib['id'], 'name':lib['name'], 'description':lib['description'], 'owner_id':lib['owner_id'], 'members':members}
+        return {'id':lib['id'], 'name':lib['name'], 'description':lib['description'], 'owner_id':lib['owner_id'], 'role':lib['role'], 'members':members}
 
 
 @app.post('/api/libraries/{library_id}/invite')
@@ -273,21 +276,26 @@ def rotate_invite(library_id: str, user=Depends(current_user)):
     code = secrets.token_urlsafe(18)
     with store.connection() as con:
         con.execute('BEGIN IMMEDIATE')
-        membership(con, library_id, user, owner=True)
+        membership(con, library_id, user, manage=True)
         con.execute('UPDATE libraries SET invite_hash=? WHERE id=?', (digest(code), library_id))
     return {'invite_code': code}
 
 
 @app.put('/api/libraries/{library_id}/members/{member_id}')
-def member_role(library_id: str, member_id: str, role: Literal['member','removed'], user=Depends(current_user)):
+def member_role(library_id: str, member_id: str, role: Literal['admin','member','removed'], user=Depends(current_user)):
     with store.connection() as con:
         con.execute('BEGIN IMMEDIATE')
-        lib = membership(con, library_id, user, owner=True)
+        lib = membership(con, library_id, user, manage=True)
         if member_id == lib['owner_id']:
-            raise HTTPException(422, '不能移除学习库管理员。')
-        result = con.execute('UPDATE members SET role=? WHERE library_id=? AND user_id=?', (role, library_id, member_id))
-        if not result.rowcount:
+            raise HTTPException(422 if lib['role'] == 'owner' else 403, '不能变更或移除学习库创建者。')
+        target = con.execute('SELECT role FROM members WHERE library_id=? AND user_id=?', (library_id, member_id)).fetchone()
+        if not target:
             raise HTTPException(404, '成员不存在。')
+        if lib['role'] != 'owner' and (role == 'admin' or target['role'] not in ('member', 'removed')):
+            raise HTTPException(403, '只有创建者可以任免或移除管理员；管理员只能移除或恢复普通成员。')
+        if role == 'admin' and target['role'] == 'removed':
+            raise HTTPException(409, '请先恢复成员资格，再设置管理员。')
+        con.execute('UPDATE members SET role=? WHERE library_id=? AND user_id=?', (role, library_id, member_id))
     return {'ok': True}
 
 
@@ -369,8 +377,8 @@ def remove_post(post_id: str, user=Depends(current_user)):
     with store.connection() as con:
         con.execute('BEGIN IMMEDIATE')
         post, lib = access_post(con, post_id, user)
-        if user['id'] not in (post['author_id'],lib['owner_id']):
-            raise HTTPException(403, '仅发布者或管理员可删除内容。')
+        if user['id'] != post['author_id'] and lib['role'] not in ('owner','admin'):
+            raise HTTPException(403, '仅发布者、创建者或管理员可删除内容。')
         con.execute('DELETE FROM posts WHERE id=?', (post_id,))
     return {'ok': True}
 

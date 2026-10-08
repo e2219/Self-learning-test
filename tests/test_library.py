@@ -164,3 +164,101 @@ def test_production_https_cookie_and_preview_validation(tmp_path, monkeypatch):
         bad = pack(); bad['questions'][0]['self_score'] = 5
         assert client.post('/api/packs/preview', json=bad).status_code == 422
         assert client.post('/api/packs/preview', json=pack(), headers={'Origin':'http://study.example'}).status_code == 403
+
+
+def join_library(client, library):
+    assert client.post('/api/libraries/join', json={'invite_code':library['invite_code']}).status_code == 200
+
+
+def change_role(client, library, user, role):
+    return client.put(f"/api/libraries/{library['id']}/members/{user['id']}?role={role}")
+
+
+def test_admin_moderation_is_library_scoped_and_revoked_immediately(cloud):
+    owner, owner_cookie = account(cloud, 'creator')
+    first, second = create(cloud), create(cloud)
+    owner_post = publish(cloud, first)
+    other_post = publish(cloud, second)
+    admin, admin_cookie = account(cloud, 'moderator')
+    join_library(cloud, first); join_library(cloud, second)
+    member, member_cookie = account(cloud, 'student')
+    join_library(cloud, first); join_library(cloud, second)
+    member_post = publish(cloud, first)
+    use(cloud, owner_cookie)
+    assert change_role(cloud, first, admin, 'admin').status_code == 200
+    use(cloud, admin_cookie)
+    roles = {lib['id']:lib['role'] for lib in cloud.get('/api/libraries').json()}
+    assert roles == {first['id']:'admin', second['id']:'member'}
+    assert cloud.get('/api/libraries/'+first['id']).json()['role'] == 'admin'
+    assert cloud.put('/api/posts/'+member_post,json={'pack':pack(),'revision':1}).status_code == 403
+    assert cloud.delete('/api/posts/'+other_post).status_code == 403
+    assert cloud.post('/api/libraries/'+second['id']+'/invite').status_code == 403
+    assert change_role(cloud, second, member, 'removed').status_code == 403
+    assert cloud.post('/api/libraries/'+first['id']+'/invite').status_code == 200
+    assert cloud.delete('/api/posts/'+owner_post).status_code == 200
+    assert change_role(cloud, first, member, 'removed').status_code == 200
+    use(cloud, member_cookie)
+    assert cloud.get('/api/posts/'+member_post+'/download').status_code == 404
+    assert cloud.get('/api/posts/'+other_post+'/download').status_code == 200
+    use(cloud, admin_cookie)
+    assert change_role(cloud, first, member, 'member').status_code == 200
+    use(cloud, member_cookie)
+    assert cloud.get('/api/posts/'+member_post+'/download').status_code == 200
+    use(cloud, owner_cookie)
+    assert change_role(cloud, first, admin, 'member').status_code == 200
+    use(cloud, admin_cookie)  # The same login session loses moderation immediately.
+    assert cloud.delete('/api/posts/'+member_post).status_code == 403
+    assert change_role(cloud, first, member, 'removed').status_code == 403
+    assert cloud.post('/api/libraries/'+first['id']+'/invite').status_code == 403
+    assert cloud.get('/api/posts/'+member_post+'/download').status_code == 200
+    assert publish(cloud, first, 'after-demotion-upload')
+
+
+def test_only_creator_can_appoint_demote_or_remove_administrators(cloud):
+    owner, owner_cookie = account(cloud, 'creator')
+    lib = create(cloud)
+    admin, admin_cookie = account(cloud, 'admin_one'); join_library(cloud, lib)
+    peer_admin, peer_cookie = account(cloud, 'admin_two'); join_library(cloud, lib)
+    member, member_cookie = account(cloud, 'student'); join_library(cloud, lib)
+    assert change_role(cloud, lib, member, 'admin').status_code == 403
+    use(cloud, owner_cookie)
+    assert change_role(cloud, lib, admin, 'admin').status_code == 200
+    assert change_role(cloud, lib, peer_admin, 'admin').status_code == 200
+    use(cloud, admin_cookie)
+    for target, role in [(owner,'removed'),(owner,'member'),(peer_admin,'removed'),(peer_admin,'member'),(admin,'removed'),(member,'admin')]:
+        assert change_role(cloud, lib, target, role).status_code == 403
+    use(cloud, owner_cookie)
+    assert change_role(cloud, lib, owner, 'removed').status_code == 422
+    assert change_role(cloud, lib, owner, 'member').status_code == 422
+    assert change_role(cloud, lib, member, 'owner').status_code == 422
+    assert change_role(cloud, lib, peer_admin, 'removed').status_code == 200
+    use(cloud, peer_cookie)
+    assert cloud.get('/api/libraries/'+lib['id']).status_code == 404
+    use(cloud, owner_cookie)
+    assert change_role(cloud, lib, peer_admin, 'admin').status_code == 409
+    assert change_role(cloud, lib, peer_admin, 'member').status_code == 200
+    assert change_role(cloud, lib, peer_admin, 'admin').status_code == 200
+    store.initialize()  # Existing owner and newly assigned admin roles survive restart.
+    use(cloud, peer_cookie)
+    assert cloud.get('/api/libraries/'+lib['id']).json()['role'] == 'admin'
+    use(cloud, owner_cookie)
+    assert cloud.get('/api/libraries/'+lib['id']).json()['role'] == 'owner'
+
+
+@pytest.mark.parametrize('role', ['owner','admin','member'])
+def test_all_three_roles_can_read_upload_download_and_manage_own_posts(cloud, role):
+    owner, owner_cookie = account(cloud, 'creator')
+    lib = create(cloud)
+    initial = publish(cloud, lib)
+    if role != 'owner':
+        user, cookie = account(cloud, 'learner'); join_library(cloud, lib)
+        if role == 'admin':
+            use(cloud, owner_cookie)
+            assert change_role(cloud, lib, user, 'admin').status_code == 200
+            use(cloud, cookie)
+    assert cloud.get('/api/posts/'+initial).status_code == 200
+    assert cloud.get('/api/posts/'+initial+'/download').status_code == 200
+    assert len(cloud.get('/api/libraries/'+lib['id']+'/posts').json()) == 1
+    own = publish(cloud, lib, 'own-role-publication')
+    assert cloud.put('/api/posts/'+own,json={'pack':pack(),'revision':1}).status_code == 200
+    assert cloud.delete('/api/posts/'+own).status_code == 200
