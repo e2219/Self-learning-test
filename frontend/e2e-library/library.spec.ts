@@ -80,8 +80,9 @@ test('个人导出 → 邀请成员 → 分享修订 → 下载导入，个人�
   await register(peer, 'classmate');
   await peer.getByLabel('学习库邀请码', { exact: true }).fill(code);
   await peer.getByRole('button', { name: '加入学习库', exact: true }).click();
+  await expect(peer.locator('.library-post-management')).toHaveCount(0);
   await peer.getByRole('button', { name: /同学的概率试卷/ }).click();
-  await expect(peer.getByRole('button', { name: '删除发布' })).toHaveCount(0);
+  await expect(peer.getByRole('button', { name: '从学习库删除' })).toHaveCount(0);
   await peer.getByRole('button', { name: '收藏内容', exact: true }).click();
   await expect(peer.getByRole('button', { name: '取消收藏' })).toBeVisible();
   await peer.getByText('查看参考答案与解析', { exact: true }).click();
@@ -127,7 +128,10 @@ test('个人导出 → 邀请成员 → 分享修订 → 下载导入，个人�
   await local.close();
 });
 
-test('创建者任免管理员，管理员维护内容和成员，普通成员保留分享权限', async ({ page, browser }) => {
+test('创建者任免管理员，管理员维护内容和成员，普通成员保留分享权限', async ({
+  page,
+  browser,
+}, info) => {
   await register(page, 'role_owner');
   const lib = await (
     await page.request.post('/api/libraries', {
@@ -170,9 +174,12 @@ test('创建者任免管理员，管理员维护内容和成员，普通成员�
   });
   expect(posted.status()).toBe(201);
   const post = await posted.json();
+  await member.getByRole('button', { name: '查询', exact: true }).click();
+  await expect(member.getByLabel('管理：成员分享的试卷', { exact: true })).toBeVisible();
   expect((await admin.request.get(`/api/posts/${post.id}/download`)).status()).toBe(200);
   await page.reload();
   await page.getByRole('button', { name: /三级权限学习库/ }).click();
+  await expect(page.getByLabel('管理：成员分享的试卷', { exact: true })).toBeVisible();
   await page.getByText('成员与邀请码', { exact: true }).click();
   const adminRow = page.locator('.library-member').filter({ hasText: 'role_admin' });
   page.once('dialog', (dialog) => dialog.accept());
@@ -190,11 +197,23 @@ test('创建者任免管理员，管理员维护内容和成员，普通成员�
   await expect(
     admin.locator('.library-member').filter({ hasText: 'role_admin' }).getByRole('button'),
   ).toHaveCount(0);
-  await admin.getByRole('button', { name: /成员分享的试卷/ }).click();
+  // Card management must not open the post; cancel leaves the published content intact.
+  const card = admin.locator('.library-post-card').filter({ hasText: '成员分享的试卷' });
+  await card.getByLabel('管理：成员分享的试卷', { exact: true }).click();
+  await admin.setViewportSize({ width: 390, height: 844 });
+  expect(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+    true,
+  );
+  await card.screenshot({ path: info.outputPath('library-card-management-mobile.png') });
+  admin.once('dialog', (dialog) => dialog.dismiss());
+  await card.getByRole('button', { name: '从学习库删除', exact: true }).click();
+  await expect(card).toBeVisible();
+  expect((await admin.request.get(`/api/posts/${post.id}`)).status()).toBe(200);
   admin.once('dialog', (dialog) => dialog.accept());
-  await admin.getByRole('button', { name: '删除发布', exact: true }).click();
+  await admin.getByRole('button', { name: '从学习库删除', exact: true }).click();
   await expect(admin.getByRole('button', { name: /成员分享的试卷/ })).toHaveCount(0);
-  await admin.getByText('成员与邀请码', { exact: true }).click();
+  // Deleting from the list preserves the already expanded member panel.
+  await expect(admin.getByRole('button', { name: '移除成员', exact: true })).toBeVisible();
   admin.once('dialog', (dialog) => dialog.accept());
   await admin
     .locator('.library-member')

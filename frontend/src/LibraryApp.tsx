@@ -194,6 +194,19 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
     await list(id);
     window.scrollTo(0, 0);
   }
+  function removePost(item: Post) {
+    if (!library || locked.current) return;
+    if (
+      !window.confirm(
+        `从学习库删除“${item.title}”及所有修订记录？个人历史试卷和已下载的副本不受影响。`,
+      )
+    )
+      return;
+    void act(async () => {
+      await api(`/posts/${item.id}`, json('DELETE'));
+      await openLibrary(library.id);
+    });
+  }
   async function openPost(id: string, revision?: number) {
     setPost(await api(`/posts/${id}${revision ? `?revision=${revision}` : ''}`));
     setCopies([]);
@@ -792,24 +805,37 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
                     </form>
                     <div className="library-grid">
                       {posts.map((item) => (
-                        <button
-                          className="panel library-card"
-                          key={item.id}
-                          disabled={busy}
-                          onClick={() => void act(() => openPost(item.id))}
-                        >
-                          <span className="badge">
-                            {item.kind === 'exam' ? '试卷' : '错题与练习'}
-                          </span>
-                          <h2>{item.title}</h2>
-                          <p>
-                            {item.course} · {item.author}
-                          </p>
-                          <p>{item.note}</p>
-                          <small>
-                            版本 {item.revision} {item.favorite ? ' · 已收藏' : ''}
-                          </small>
-                        </button>
+                        <article className="panel library-post-card" key={item.id}>
+                          <button
+                            className="library-post-open"
+                            disabled={busy}
+                            onClick={() => void act(() => openPost(item.id))}
+                          >
+                            <span className="badge">
+                              {item.kind === 'exam' ? '试卷' : '错题与练习'}
+                            </span>
+                            <h2>{item.title}</h2>
+                            <p>
+                              {item.course} · {item.author}
+                            </p>
+                            <p>{item.note}</p>
+                            <small>
+                              版本 {item.revision} {item.favorite ? ' · 已收藏' : ''}
+                            </small>
+                          </button>
+                          {(item.author_id === user.id || canManage) && (
+                            <details className="library-post-management">
+                              <summary aria-label={`管理：${item.title}`}>管理</summary>
+                              <button
+                                className="button danger"
+                                disabled={busy}
+                                onClick={() => removePost(item)}
+                              >
+                                从学习库删除
+                              </button>
+                            </details>
+                          )}
+                        </article>
                       ))}
                     </div>
                     {!posts.length && <p>还没有符合条件的内容，试试上传第一份试卷。</p>}
@@ -1055,19 +1081,11 @@ export function LibraryApp({ embedded = false }: { embedded?: boolean }) {
                       </button>
                       {(post.author_id === user.id || canManage) && (
                         <button
-                          className="button ghost"
+                          className="button danger"
                           disabled={busy}
-                          onClick={() => {
-                            if (
-                              window.confirm('删除这份发布及所有修订记录？已经下载的副本不受影响。')
-                            )
-                              void act(async () => {
-                                await api(`/posts/${post.id}`, json('DELETE'));
-                                await openLibrary(library.id);
-                              });
-                          }}
+                          onClick={() => removePost(post)}
                         >
-                          删除发布
+                          从学习库删除
                         </button>
                       )}
                     </div>
