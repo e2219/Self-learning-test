@@ -18,6 +18,7 @@ from .generation import GenerationError, active_exams, plan_questions, retrieve,
 from .choice_answers import MULTI_TYPES, canonical
 from .models import CourseInput, ExamInput, LoginInput, PageInput, OCRInput, ProgressInput, QuestionEdit, SettingsInput, TableReviewInput, RegionInput, PlanSaveInput, AnswerCheckInput, BudgetInput, OCRBudgetInput
 from .pdf import PDFError, PDFSizeError, save_and_extract_pdf, text_quality_issue, save_image_as_pdf
+from .presentations import save_presentation_as_pdf
 
 
 @asynccontextmanager
@@ -234,9 +235,14 @@ async def upload_document(course_id: str, file: UploadFile = File(...), kind: st
         file.file.seek(0)
         is_pdf = file.file.read(1024).lstrip().startswith(b"%PDF-")
         file.file.seek(0)
-        if is_pdf and file.size is not None and file.size > limits.MAX_PDF_BYTES:
-            raise HTTPException(413, f"PDF 不能超过 {limits.MAX_PDF_MB} MB。")
-        pages, outline, warnings = await run_in_threadpool(save_and_extract_pdf if is_pdf else save_image_as_pdf, file.file, path)
+        suffix = Path(file.filename or '').suffix.lower()
+        presentation = not is_pdf and suffix in ('.ppt', '.pptx')
+        if (is_pdf or presentation) and file.size is not None and file.size > limits.MAX_PDF_BYTES:
+            raise HTTPException(413, f"PDF/PPT/PPTX 不能超过 {limits.MAX_PDF_MB} MB。")
+        if presentation:
+            pages, outline, warnings = await run_in_threadpool(save_presentation_as_pdf, file.file, path, suffix)
+        else:
+            pages, outline, warnings = await run_in_threadpool(save_and_extract_pdf if is_pdf else save_image_as_pdf, file.file, path)
         # A long-running upload must not recreate a course deleted in another tab.
         required("courses", course_id)
         with db.connection() as con:
