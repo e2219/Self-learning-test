@@ -529,26 +529,6 @@ export function QuestionCard({
       )}
       <ExternalAttribution sources={q.sources} />
       {q.error && <Notice tone="error">{q.error}</Notice>}
-      {complete && (
-        <small className="muted">
-          {q.review?.status === 'passed'
-            ? q.review?.method === 'combined'
-              ? '已通过 AI 单次合并审题（非独立盲审），仍建议核对'
-              : `已通过 AI 独立审题${q.review?.source_images_checked ? '及原图复核' : ''}，仍建议人工核对`
-            : q.sources.some((s) => s.imported)
-              ? '来源摘录题；答案由导入者整理，未经 AI 核验'
-              : '此题尚无独立审题记录'}
-        </small>
-      )}
-      {complete && q.review?.local_checks && (
-        <small className="muted local-check-note">
-          本地核验：{q.review.local_checks.arithmetic} 处数值等式、{q.review.local_checks.logic}{' '}
-          处逻辑等价式；
-          {q.review.local_checks.arithmetic + q.review.local_checks.logic === 0
-            ? '本题没有可自动确认的验算结果。'
-            : '仅核验支持的表达式，不代表整题或证明正确。'}
-        </small>
-      )}
       {!complete && !q.stem ? (
         <div className="question-pending">
           {q.status === 'generating' ? (
@@ -569,16 +549,6 @@ export function QuestionCard({
         </div>
       ) : (
         <>
-          {isChoice(q.type) && (
-            <p className="field-help choice-instructions">
-              {q.type === 'choice'
-                ? '单选：只有一个正确选项。'
-                : q.type === 'multiple_choice'
-                  ? '多选：至少两个正确选项，点击可选中或取消。'
-                  : '不定项：一个或多个正确选项，点击可选中或取消。'}
-              保存作答后自动核分；全对得满分，漏选或错选不得分。
-            </p>
-          )}
           <MathText className="question-stem">{q.stem}</MathText>
           {q.options.length > 0 && (
             <div className="question-options">
