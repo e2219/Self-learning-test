@@ -194,7 +194,7 @@ export function Dashboard() {
           </div>
           <div>
             <h3>从一门课程开始</h3>
-            <p>创建课程后，上传 PDF、PPT 课件或图片，就可以生成第一份测验。</p>
+            <p>创建课程后，上传 PDF 教材，就可以生成第一份测验。</p>
           </div>
           <Link className="button secondary" to="/courses">
             <Plus size={16} />
@@ -416,7 +416,7 @@ function DocumentPreview({ doc, close }: { doc: Document; close: () => void }) {
           target="_blank"
           rel="noreferrer"
         >
-          查看 PDF 预览 <ArrowDownToLine size={14} />
+          查看原 PDF <ArrowDownToLine size={14} />
         </a>
       </div>
       {doc.outline.length > 0 && (
@@ -533,7 +533,7 @@ export function CoursePage() {
   async function upload(file: File) {
     const image = /\.(png|jpe?g|webp)$/i.test(file.name);
     if (file.size > (image ? 20 * 1024 * 1024 : maxBytes)) {
-      setMessage(image ? '单张图片不能超过 20 MB。' : `PDF/PPT/PPTX 不能超过 ${sizeLimit}。`);
+      setMessage(image ? '单张图片不能超过 20 MB。' : `PDF 不能超过 ${sizeLimit}。`);
       return;
     }
     setUploading(true);
@@ -627,9 +627,8 @@ export function CoursePage() {
                 : '把教材放进你的学习空间'}
             </h3>
             <p>
-              支持 PDF、PPT、PPTX、JPG、PNG、WebP。文档最多 {sizeLimit} / {maxPages}{' '}
-              页；静态图片最多 20 MB / 4000 万像素，作为单页资料导入后识别。PPT/PPTX 需本机安装
-              LibreOffice，自动转换为 PDF 后使用，不消耗 AI tokens。
+              支持 PDF、JPG、PNG、WebP。PDF 最多 {sizeLimit} / {maxPages} 页；静态图片最多 20 MB /
+              4000 万像素，作为单页资料导入后识别。
             </p>
             {uploading && (
               <div role="status">
@@ -663,13 +662,13 @@ export function CoursePage() {
                 onClick={() => fileRef.current?.click()}
               >
                 <Plus size={16} />
-                {uploading ? '处理中…' : '选择 PDF、PPT 或图片'}
+                {uploading ? '处理中…' : '选择 PDF 或图片'}
               </button>
               <input
                 hidden
                 ref={fileRef}
                 type="file"
-                accept="application/pdf,.pdf,.ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
                 onChange={(e) => {
                   if (e.target.files?.[0]) void upload(e.target.files[0]);
                 }}
