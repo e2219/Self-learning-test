@@ -72,6 +72,13 @@ export type Question = {
     method?: string;
     source_images_checked?: boolean;
     expanded_explanation?: boolean;
+    local_checks?: {
+      arithmetic: number;
+      logic: number;
+      numeric_options: number;
+      skipped: number;
+      scope: string;
+    };
   };
   options: string[];
   answer: string;

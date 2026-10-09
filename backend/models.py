@@ -101,6 +101,7 @@ class BlankAnswer(BaseModel):
 
 class GeneratedQuestion(BaseModel):
     _review: dict = PrivateAttr(default_factory=dict)
+    _local_checks: dict = PrivateAttr(default_factory=dict)
     blanks: list[BlankAnswer] = Field(default_factory=list, max_length=12)
     stem: str = Field(min_length=5, max_length=12000)
     options: list[str] = Field(default_factory=list, max_length=6)

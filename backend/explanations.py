@@ -1,7 +1,7 @@
 """Opt-in, cached explanation expansion; never alters the question or answer."""
 import json
 import httpx
-from . import db, deepseek, providers, usage, quality, materials, vision
+from . import db, deepseek, providers, local_quality, usage, quality, materials, vision
 from .generation import GenerationError, reported_usage
 from .models import GeneratedQuestion
 
@@ -48,10 +48,14 @@ async def expand(question, exam):
         if not isinstance(text,str) or not text.strip() or len(text)>20000:
             raise GenerationError('详解格式异常，原解析已保留。')
         content['explanation']=text
+        try:
+            local_checks = local_quality.check(GeneratedQuestion.model_validate(content), q['type'])
+        except local_quality.LocalQualityError as exc:
+            raise GenerationError('补充详解未通过本地核验：' + str(exc)) from exc
         audit=quality.parse_review(await call({'question':content,'reference_material':refs,
             'instructions':'独立核对详细解析的每个步骤、答案及原文；不能默认题目正确，发现任何矛盾必须拒绝。',
             'schema':usage.compact_schema(quality.ConsistencyReview.model_json_schema())},'explanation_review'),quality.ConsistencyReview)
         if not all((audit.answer_matches,audit.explanation_consistent,audit.evidence_supported)) or audit.issues:
             raise GenerationError('补充详解未通过核验，已保留原解析。')
-        review={**q['review'],'expanded_explanation':True,'explanation_review':audit.model_dump()}
+        review={**q['review'],'local_checks':local_checks,'expanded_explanation':True,'explanation_review':audit.model_dump()}
         db.execute('UPDATE questions SET explanation=?,review=? WHERE id=?',(text,db.dump(review),q['id']))

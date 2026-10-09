@@ -3804,3 +3804,8 @@ textarea::placeholder {
 .settings-layout > div > .panel + .panel {
   margin-top: 24px;
 }
+
+.local-check-note {
+  display: block;
+  margin-top: 6px;
+}

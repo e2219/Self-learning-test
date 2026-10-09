@@ -540,6 +540,15 @@ export function QuestionCard({
               : '此题尚无独立审题记录'}
         </small>
       )}
+      {complete && q.review?.local_checks && (
+        <small className="muted local-check-note">
+          本地核验：{q.review.local_checks.arithmetic} 处数值等式、{q.review.local_checks.logic}{' '}
+          处逻辑等价式；
+          {q.review.local_checks.arithmetic + q.review.local_checks.logic === 0
+            ? '本题没有可自动确认的验算结果。'
+            : '仅核验支持的表达式，不代表整题或证明正确。'}
+        </small>
+      )}
       {!complete && !q.stem ? (
         <div className="question-pending">
           {q.status === 'generating' ? (

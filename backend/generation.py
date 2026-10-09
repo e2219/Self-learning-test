@@ -6,7 +6,7 @@ import re
 import httpx
 from pydantic import ValidationError
 
-from . import db, deepseek, providers, quality, materials, vision
+from . import db, deepseek, providers, local_quality, quality, materials, vision
 from . import usage as meter
 from .choice_answers import CHOICE_TYPES, MULTI_TYPES, canonical
 from .models import ExamInput, GeneratedQuestion
@@ -179,6 +179,10 @@ def validate_content(content, question_type, references, previous):
     allowed = {(r["document_id"], r["page"]) for r in references}
     if any((c.document_id, c.page) not in allowed for c in q.sources):
         raise OutputValidationError("题目引用了未提供的资料页，已拒绝保存。")
+    try:
+        q._local_checks = local_quality.check(q, question_type)
+    except local_quality.LocalQualityError as exc:
+        raise OutputValidationError(str(exc), code="QUESTION_LOCAL_CHECK") from exc
     if is_duplicate(q, question_type, previous):
         raise DuplicateQuestionError()
     return q
@@ -282,6 +286,7 @@ custom_instructions 是用户的可选命题要求，仅在资料、题型和已
         "position": question.get("position", 1), "difficulty": config["difficulty"], "focus": config.get("focus", "")},
         "avoid_questions": previous_for_prompt(previous), "reference_material": references,
         "output_example_structure_only": example, "output_schema": schema}
+    user["task"]["requirements"] = local_quality.task_contract(question["type"], config["difficulty"])
     user["target_passage"] = select_target_passage(references, previous, question.get("position", 1))
     return system, user
 
@@ -342,6 +347,7 @@ async def generate_one(question, config, references, previous):
                         generated._review = await quality.review_question(request_model, generated, question["type"], references, previous_for_prompt(previous), course)
                     except quality.ReviewError as exc:
                         raise OutputValidationError(str(exc), code="QUESTION_REVIEW") from exc
+                    generated._review["local_checks"] = generated._local_checks
                     generated._review["requested_model"] = providers.config('vision' if direct else 'text')['model']
                     generated._review["source_images_checked"] = bool(risk_refs)
                     return generated, total_usage

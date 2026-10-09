@@ -56,6 +56,8 @@ test('教材 → 组卷 → 作答评分 → 错题 → 分离打印，覆盖桌
     page.getByRole('heading', { name: '独立事件 · 第一章巩固练习', exact: true }),
   ).toBeVisible();
   await expect(page.getByText('已生成 2 / 2 题')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('.local-check-note').first()).toContainText('1 处数值等式');
+  await expect(page.locator('.local-check-note').first()).toContainText('不代表整题或证明正确');
   const examUrl = page.url();
   await expect(page.locator('.solution')).toHaveCount(0);
   const first = page.locator('.question-card').first();

@@ -11,7 +11,7 @@ os.environ["STUDY_ACCESS_CODE"] = "browser-test-only"
 os.environ["DEEPSEEK_API_KEY"] = "mock-provider-for-browser-tests"
 os.environ["STUDY_DATA_DIR"] = tempfile.mkdtemp(prefix="zhixi-e2e-")
 
-from backend import generation  # noqa: E402
+from backend import generation, local_quality  # noqa: E402
 from backend.main import app  # noqa: E402, F401
 from backend.models import GeneratedQuestion  # noqa: E402
 from tests.test_api import sample_pdf  # noqa: E402
@@ -22,7 +22,7 @@ Path(os.environ["STUDY_DATA_DIR"], "sample.pdf").write_bytes(sample_pdf())
 async def mock_generate(question, config, references, previous):
     await asyncio.sleep(.05)
     kind = question["type"]
-    return GeneratedQuestion(
+    generated = GeneratedQuestion(
         blanks=[{"answer":"$0.2$", "alternatives":[]}, {"answer":"0.5", "alternatives":[]}] if kind == "fill" else [],
         stem="独立事件 A、B 的交集概率为 [[blank:1]]，比例为 $v=[[blank:2]] V$。" if kind == "fill" else f"练习 {question['position']}：设事件 $A$ 与 $B$ 相互独立，且 $P(A)=0.4$，$P(B)=0.5$。求 $P(A\\cap B)$。",
         options=["$0.2$", "$0.4$", "$0.5$", "$0.9$"] if kind in ("choice", "multiple_choice", "indefinite_choice") else [],
@@ -31,7 +31,9 @@ async def mock_generate(question, config, references, previous):
         rubric=["正确写出独立事件的乘法公式。", "正确代入数值并计算。"],
         knowledge=r"事件独立性：$P(A\cap B)=P(A)P(B)$；泊松近似：$\binom{n}{k}p^k(1-p)^{n-k}\approx\frac{\lambda^k e^{-\lambda}}{k!}$，$\lambda=np$。",
         sources=[{"document_id": references[0]["document_id"], "page": references[0]["page"]}],
-    ), 250
+    )
+    generated._review = {"local_checks": local_quality.check(generated, kind)}
+    return generated, 250
 
 
 generation.generate_one = mock_generate
