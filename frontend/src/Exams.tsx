@@ -1,4 +1,5 @@
 import { DeleteAction } from './DeleteAction';
+import { newSubmissionId } from './draft';
 import { UsageBreakdown } from './Usage';
 import {
   SavedAnswerResult,
@@ -334,7 +335,7 @@ function AttemptHistory({ question, close }: { question: Question; close: () => 
     { id: string; score: number; user_answer: string; created_at: string; snapshot: Question }[]
   >(`/questions/${question.id}/attempts`);
   return (
-    <Modal title="自行评分记录" close={close}>
+    <Modal title="作答与评分记录" close={close}>
       {history.error && <Notice tone="error">{history.error}</Notice>}
       {history.loading ? (
         <Loading />
@@ -350,6 +351,9 @@ function AttemptHistory({ question, close }: { question: Question; close: () => 
             <p className="attempt-answer">
               {displaySavedAnswer(a.snapshot, a.user_answer) || '纸上作答（未填写文字答案）'}
             </p>
+            {a.snapshot.practice_exam_id && (
+              <Link to={`/exams/${a.snapshot.practice_exam_id}`}>查看这次错题练习</Link>
+            )}
             <details>
               <summary>查看当时的题目与答案</summary>
               <MathText>{a.snapshot.stem}</MathText>
@@ -372,6 +376,7 @@ export function QuestionCard({
   question: q,
   index,
   practice = true,
+  allowAI = true,
   editable = false,
   busy = false,
   onChange,
@@ -380,6 +385,7 @@ export function QuestionCard({
   question: Question;
   index: number;
   practice?: boolean;
+  allowAI?: boolean;
   editable?: boolean;
   busy?: boolean;
   onChange: () => void;
@@ -466,15 +472,17 @@ export function QuestionCard({
               >
                 <Bookmark size={17} fill={q.is_favorite ? 'currentColor' : 'none'} />
               </button>
-              <button
-                className={`icon-button ${q.is_wrong ? 'wrong-marked' : ''}`}
-                title={q.is_wrong ? '移出错题本' : '加入错题本'}
-                aria-label={q.is_wrong ? '移出错题本' : '加入错题本'}
-                disabled={saving}
-                onClick={() => void save({ is_wrong: !q.is_wrong })}
-              >
-                <NotebookPen size={17} />
-              </button>
+              {!q.practice_source_id && (
+                <button
+                  className={`icon-button ${q.is_wrong ? 'wrong-marked' : ''}`}
+                  title={q.is_wrong ? '移出错题本' : '加入错题本'}
+                  aria-label={q.is_wrong ? '移出错题本' : '加入错题本'}
+                  disabled={saving}
+                  onClick={() => void save({ is_wrong: !q.is_wrong })}
+                >
+                  <NotebookPen size={17} />
+                </button>
+              )}
             </>
           )}
           {editable && !busy && (
@@ -684,7 +692,7 @@ export function QuestionCard({
                   <MathText>{q.answer}</MathText>
                   <div className="solution-label">解题思路</div>
                   <MathText>{q.explanation}</MathText>
-                  {!q.sources.some((s) => s.imported) && (
+                  {allowAI && !q.practice_source_id && !q.sources.some((s) => s.imported) && (
                     <button
                       className="button ghost"
 
@@ -937,7 +945,8 @@ export function ExamPage() {
               question={q}
               index={i + 1}
               practice={mode === 'practice'}
-              editable
+              allowAI={!data.config.practice}
+              editable={!data.config.practice}
               busy={generating || actionBusy}
               onChange={() => void exam.reload()}
               onAction={action}
@@ -986,55 +995,57 @@ export function ExamPage() {
           <div className="exam-admin">
             <span>已记录模型用量：{data.tokens.toLocaleString()} tokens</span>
             <UsageBreakdown rows={data.usage} />
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const fields = new FormData(e.currentTarget);
-                try {
-                  await api(
-                    `/exams/${examId}/budget`,
-                    json('PUT', {
-                      token_budget: Number(fields.get('budget')),
-                      max_attempts: Number(fields.get('attempts')),
-                    }),
-                  );
-                  await exam.reload();
-                } catch (err) {
-                  setError((err as Error).message);
-                }
-              }}
-            >
-              <label>
-                累计 token 预算阈值
-                <input
-                  name="budget"
-                  type="number"
-                  min={0}
-                  max={10000000}
-                  required
-                  defaultValue={data.config.token_budget || 0}
-                  disabled={generating || actionBusy}
-                />
-              </label>
-              <label>
-                每题最多尝试次数
-                <input
-                  name="attempts"
-                  type="number"
-                  min={1}
-                  max={3}
-                  required
-                  defaultValue={data.config.max_attempts ?? 3}
-                  disabled={generating || actionBusy}
-                />
-              </label>
-              <button className="button secondary" disabled={generating || actionBusy}>
-                保存用量设置
-              </button>
-              <p className="field-help">
-                预算 0 为不限；修改后点击继续 / 重试，已完成题目保留。规划、OCR 另计。
-              </p>
-            </form>
+            {!data.config.practice && (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const fields = new FormData(e.currentTarget);
+                  try {
+                    await api(
+                      `/exams/${examId}/budget`,
+                      json('PUT', {
+                        token_budget: Number(fields.get('budget')),
+                        max_attempts: Number(fields.get('attempts')),
+                      }),
+                    );
+                    await exam.reload();
+                  } catch (err) {
+                    setError((err as Error).message);
+                  }
+                }}
+              >
+                <label>
+                  累计 token 预算阈值
+                  <input
+                    name="budget"
+                    type="number"
+                    min={0}
+                    max={10000000}
+                    required
+                    defaultValue={data.config.token_budget || 0}
+                    disabled={generating || actionBusy}
+                  />
+                </label>
+                <label>
+                  每题最多尝试次数
+                  <input
+                    name="attempts"
+                    type="number"
+                    min={1}
+                    max={3}
+                    required
+                    defaultValue={data.config.max_attempts ?? 3}
+                    disabled={generating || actionBusy}
+                  />
+                </label>
+                <button className="button secondary" disabled={generating || actionBusy}>
+                  保存用量设置
+                </button>
+                <p className="field-help">
+                  预算 0 为不限；修改后点击继续 / 重试，已完成题目保留。规划、OCR 另计。
+                </p>
+              </form>
+            )}
             <button
               className="text-link muted"
               disabled={generating || actionBusy}
@@ -1158,10 +1169,45 @@ export function PrintPage() {
 }
 
 export function Review() {
+  const navigate = useNavigate();
+  const [starting, setStarting] = useState(false),
+    [startError, setStartError] = useState('');
+  const startingRef = useRef(false);
+  const submission = useRef<{ courseId: string; id: string } | null>(null);
   const courses = useRemote<Course[]>('/courses'),
     [courseId, setCourseId] = useState(''),
     [mode, setMode] = useState('wrong');
   const review = useRemote<Question[]>(`/review?course_id=${courseId}&mode=${mode}`);
+  async function startPractice() {
+    if (startingRef.current) return;
+    const available = [
+      ...new Set((review.data || []).filter((q) => q.status === 'ready').map((q) => q.course_id)),
+    ];
+    const selected = courseId || (available.length === 1 ? available[0] : '');
+    if (!selected) {
+      setStartError('请先在课程筛选中选择一门课程。');
+      return;
+    }
+    startingRef.current = true;
+    setStarting(true);
+    setStartError('');
+    if (submission.current?.courseId !== selected)
+      submission.current = { courseId: selected, id: newSubmissionId() };
+    try {
+      const exam = await api<Exam>(
+        '/review/practice',
+        json('POST', { course_id: selected, submission_id: submission.current.id }),
+      );
+      navigate(`/exams/${exam.id}`);
+    } catch (e) {
+      const message = (e as Error).message;
+      setStartError(message);
+      if (message.includes('已删除')) submission.current = null;
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+  }
   return (
     <>
       <PageHeading
@@ -1196,7 +1242,17 @@ export function Review() {
           ))}
         </select>
         <span>{review.data?.length || 0} 道题</span>
+        {mode === 'wrong' && (
+          <button
+            className="button primary"
+            disabled={starting || review.loading || !review.data?.some((q) => q.status === 'ready')}
+            onClick={() => void startPractice()}
+          >
+            {starting ? '正在准备…' : '开始练习'}
+          </button>
+        )}
       </div>
+      {startError && <Notice tone="error">{startError}</Notice>}
       {review.error && <Notice tone="error">{review.error}</Notice>}
       {review.loading ? (
         <Loading />
@@ -1232,7 +1288,10 @@ export function Review() {
       )}
       <div className="quiet-note">
         <Sparkles size={17} />
-        <span>第一版支持重做原题。之后可继续扩展同知识点变式题与复习计划。</span>
+        <span>
+          开始练习会从所选课程随机抽取最多 10 道错题，不调用
+          AI。原卷作答保留，练习卷保存到历史试卷。
+        </span>
       </div>
     </>
   );

@@ -59,6 +59,9 @@ export type Source = {
   revision?: number;
 };
 export type Question = {
+  course_id?: string;
+  practice_source_id?: string | null;
+  practice_exam_id?: string;
   id: string;
   exam_id: string;
   position: number;
@@ -101,6 +104,7 @@ export type SourceRange = {
   end: number;
 };
 export type ExamConfig = {
+  practice?: boolean;
   origin?: string;
   course_id: string;
   title: string;

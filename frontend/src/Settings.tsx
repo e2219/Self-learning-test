@@ -1,4 +1,5 @@
 import { ProviderSettings } from './ProviderSettings';
+import { Backup } from './Backup';
 import { useState } from 'react';
 import { Check, KeyRound, Save, Server, ShieldCheck, Wifi } from 'lucide-react';
 import { api, json, useRemote } from './api';
@@ -25,6 +26,7 @@ export function SettingsPage() {
       ) : (
         <div className="settings-layout">
           <div>
+            <Backup />
             {settings.data?.providers &&
               (['text', 'vision'] as const).map((role) => (
                 <ProviderSettings
@@ -180,7 +182,7 @@ export function SettingsPage() {
                 <Server size={20} />
                 <div>
                   <strong>教材与学习记录</strong>
-                  <p>保存在项目的 data 目录，备份时请先关闭应用，再复制整个目录。</p>
+                  <p>保存在本机 data 目录，可使用“一键备份”下载教材及学习记录。</p>
                 </div>
               </div>
               <div className="settings-note">

@@ -656,3 +656,91 @@ test('列表删除：取消保留、失败提示、删卷保留资料、删课�
   expect((await page.request.get(`/api/exams/${second.id}`)).status()).toBe(404);
   expect((await page.request.get(`/api/documents/${doc.id}/file`)).status()).toBe(404);
 });
+
+test('错题开始练习 → 断网重试不重复 → 独立评分 → 一键备份', async ({ page }, testInfo) => {
+  await page.request.post('/api/login', { data: { code: 'browser-test-only' } });
+  const course = await (
+    await page.request.post('/api/courses', { data: { name: '错题重练测试' } })
+  ).json();
+  const pdf = execFileSync(
+    '.venv/bin/python',
+    [
+      '-c',
+      'from tests.test_api import sample_pdf; import sys; sys.stdout.buffer.write(sample_pdf())',
+    ],
+    { cwd: '..' },
+  );
+  const doc = await (
+    await page.request.post(`/api/courses/${course.id}/documents`, {
+      multipart: { file: { name: '复习教材.pdf', mimeType: 'application/pdf', buffer: pdf } },
+    })
+  ).json();
+  const original = await (
+    await page.request.post('/api/exams', {
+      data: {
+        course_id: course.id,
+        title: '原始测验',
+        ranges: [{ document_id: doc.id, start: 1, end: 1 }],
+        rules: [{ type: 'choice', count: 1, points: 5 }],
+        difficulty: '基础巩固',
+      },
+    })
+  ).json();
+  let ready = await (await page.request.get(`/api/exams/${original.id}`)).json();
+  await expect
+    .poll(async () => {
+      ready = await (await page.request.get(`/api/exams/${original.id}`)).json();
+      return ready.status;
+    })
+    .toBe('ready');
+  const source = ready.questions[0];
+  await page.request.patch(`/api/questions/${source.id}/progress`, {
+    data: { user_answer: 'B', auto_score: true },
+  });
+  await page.goto('/review');
+  await page.getByLabel('筛选课程').selectOption(course.id);
+  await expect(page.locator('.question-card')).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath('review-start-mobile.png'), fullPage: true });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+  ).toBeTruthy();
+  let submissions: string[] = [];
+  await page.route('**/api/review/practice', async (route) => {
+    submissions.push(route.request().postDataJSON().submission_id);
+    const response = await route.fetch();
+    if (submissions.length === 1) await route.abort('failed');
+    else await route.fulfill({ response });
+  });
+  await page.getByRole('button', { name: '开始练习', exact: true }).click();
+  await expect(page.getByRole('button', { name: '开始练习', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '开始练习', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /错题重练测试 · 错题练习/ })).toBeVisible();
+  expect(submissions).toHaveLength(2);
+  expect(submissions[0]).toBe(submissions[1]);
+  await expect(page.locator('.solution')).toHaveCount(0);
+  await expect(page.locator('.option.chosen')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '重新生成此题' })).toHaveCount(0);
+  await expect(page.getByText('累计 token 预算阈值')).toHaveCount(0);
+  await page.locator('.option').first().click();
+  await page.getByRole('button', { name: '保存作答', exact: true }).click();
+  await expect(page.getByText('得分 5 分', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('得分 5 分', { exact: true })).toBeVisible();
+  const after = await (await page.request.get(`/api/exams/${original.id}`)).json();
+  expect(after.questions[0].user_answer).toBe('B');
+  expect(after.questions[0].self_score).toBe(0);
+  const history = await (await page.request.get(`/api/questions/${source.id}/attempts`)).json();
+  expect(history).toHaveLength(2);
+  await page.goto('/settings');
+  await page.screenshot({ path: testInfo.outputPath('backup-mobile.png'), fullPage: true });
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', { name: '一键备份', exact: true }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toMatch(/知习备份.*\.zip$/);
+  await download.saveAs(testInfo.outputPath('backup.zip'));
+  expect(await download.failure()).toBeNull();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+  ).toBeTruthy();
+});

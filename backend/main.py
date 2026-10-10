@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import providers
+from . import providers, practice, backups
 from . import db, limits, security, ocr, deepseek, materials, planning, drafts, answer_check, usage, explanations
 from .generation import GenerationError, active_exams, plan_questions, retrieve, material_candidates, run_generation, validate_content
 from .choice_answers import MULTI_TYPES, canonical
@@ -173,7 +173,7 @@ def courses():
     return db.rows("""SELECT c.*,
         (SELECT count(*) FROM documents d WHERE d.course_id=c.id) AS document_count,
         (SELECT count(*) FROM exams e WHERE e.course_id=c.id) AS exam_count,
-        (SELECT count(*) FROM questions q JOIN exams e ON q.exam_id=e.id WHERE e.course_id=c.id AND q.is_wrong=1) AS wrong_count
+        (SELECT count(*) FROM questions q JOIN exams e ON q.exam_id=e.id WHERE e.course_id=c.id AND q.is_wrong=1 AND q.practice_source_id IS NULL) AS wrong_count
         FROM courses c ORDER BY c.created_at DESC""")
 
 
@@ -564,6 +564,8 @@ def update_budget(exam_id: str, payload: BudgetInput):
 async def expand_explanation(question_id: str):
     question = required('questions',question_id)
     exam = ensure_idle(question['exam_id'])
+    if json.loads(exam['config']).get('practice'):
+        raise HTTPException(422, '错题练习复用原题解析，不调用 AI；如需修改，请打开原试卷。')
     if json.loads(exam['config']).get('origin') == 'web_import':
         raise HTTPException(422, '来源摘录题不支持重新生成或 AI 详解；可手动编辑修订。')
     if question['status'] != 'ready': raise HTTPException(409,'请先完成题目生成。')
@@ -582,6 +584,8 @@ async def expand_explanation(question_id: str):
 
 @api.post("/exams/{exam_id}/retry")
 async def retry_exam(exam_id: str, background: BackgroundTasks):
+    if json.loads(required('exams', exam_id)['config']).get('practice'):
+        raise HTTPException(422, '错题练习已准备完成，无需调用 AI 重试。')
     exam = ensure_idle(exam_id)
     if not providers.has_key("vision" if json.loads(exam["config"]).get("reading_mode") == "vision" else "text"):
         raise HTTPException(422, "请先配置 AI API Key。")
@@ -611,6 +615,8 @@ def delete_exam(exam_id: str):
 async def regenerate(question_id: str, background: BackgroundTasks):
     question = required("questions", question_id)
     exam = ensure_idle(question["exam_id"])
+    if json.loads(exam['config']).get('practice'):
+        raise HTTPException(422, '错题练习不重新生成题目，请打开原试卷。')
     if not providers.has_key("vision" if json.loads(exam["config"]).get("reading_mode") == "vision" else "text"):
         raise HTTPException(422, "请先配置 AI API Key。")
     if json.loads(exam['config']).get('origin') == 'web_import':
@@ -701,10 +707,11 @@ def progress(question_id: str, payload: ProgressInput):
             if 'is_wrong' not in values:
                 values['is_wrong'] = values['self_score'] < question['points']
         values = {k: v for k, v in values.items() if v is not None or k == 'self_score'}
-        unchanged_auto_score = auto_score and values.get('user_answer') == question['user_answer'] and values.get('self_score') == question['self_score']
+        unchanged_auto_score = (auto_score or question.get('practice_source_id')) and values.get('user_answer', question['user_answer']) == question['user_answer'] and values.get('self_score') == question['self_score']
         if values.get('self_score') is not None and not unchanged_auto_score:
             con.execute('INSERT INTO attempts(id,question_id,user_answer,score,snapshot) VALUES (?,?,?,?,?)',
                 (uuid.uuid4().hex, question_id, values.get('user_answer', question['user_answer']), values['self_score'], db.dump(db.question(dict(question)))))
+            practice.record_source_result(con, question, values)
         if values:
             con.execute(f"UPDATE questions SET {','.join(k+'=?' for k in values)} WHERE id=?", (*values.values(), question_id))
         saved = db.question(dict(con.execute('SELECT * FROM questions WHERE id=?', (question_id,)).fetchone()))
@@ -720,10 +727,31 @@ def attempts(question_id: str):
 
 @api.get("/review")
 def review(course_id: str = "", mode: str = "wrong"):
-    condition = "q.is_favorite=1" if mode == "favorites" else "q.is_wrong=1"
+    condition = "q.is_favorite=1" if mode == "favorites" else "q.is_wrong=1 AND q.practice_source_id IS NULL"
     return [db.question(q) for q in db.rows(f"""SELECT q.*,e.title AS exam_title,e.course_id,c.name AS course_name
         FROM questions q JOIN exams e ON e.id=q.exam_id JOIN courses c ON c.id=e.course_id
         WHERE {condition} AND (?='' OR e.course_id=?) ORDER BY e.created_at DESC,q.position""", (course_id, course_id))]
+
+
+@api.post('/review/practice', status_code=201)
+def start_practice(payload: practice.PracticeInput):
+    return exam_detail(practice.create(payload))
+
+
+@api.post('/backups', status_code=201)
+def create_backup():
+    try:
+        return backups.create()
+    except backups.BackupError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@api.get('/backups/{backup_id}')
+def download_backup(backup_id: str, background: BackgroundTasks):
+    item = backups.take(backup_id)
+    if not item: raise HTTPException(404, '备份链接已失效，请重新备份。')
+    background.add_task(item['temporary'].cleanup)
+    return FileResponse(item['path'], media_type='application/zip', filename=item['filename'], background=background)
 
 
 app.include_router(api)

@@ -118,6 +118,8 @@ def init_db():
             if name not in page_columns:
                 con.execute(f"ALTER TABLE pages ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
         question_columns = {r["name"] for r in con.execute("PRAGMA table_info(questions)")}
+        if 'practice_source_id' not in question_columns:
+            con.execute('ALTER TABLE questions ADD COLUMN practice_source_id TEXT REFERENCES questions(id) ON DELETE SET NULL')
         for name, default in (("blanks", "[]"), ("review", "{}"), ("candidate", "")):
             if name not in question_columns:
                 con.execute(f"ALTER TABLE questions ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
