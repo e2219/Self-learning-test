@@ -20,9 +20,18 @@ class ProviderInput(BaseModel):
     clear_key: bool = False
     json_mode: bool = True
     image_detail: Literal['auto', 'low', 'high', 'original'] = 'high'
+    thinking: Literal['provider_default', 'disabled', 'enabled'] = 'provider_default'
+    input_price: float | None = Field(default=None, ge=0, le=10000, allow_inf_nan=False)
+    cached_price: float | None = Field(default=None, ge=0, le=10000, allow_inf_nan=False)
+    output_price: float | None = Field(default=None, ge=0, le=10000, allow_inf_nan=False)
 
     @model_validator(mode='after')
     def valid(self):
+        prices = (self.input_price, self.cached_price, self.output_price)
+        if any(v is not None for v in prices) and not all(v is not None for v in prices):
+            raise ValueError('计价需同时填写输入、缓存命中和输出单价')
+        if self.cached_price is not None and self.cached_price > self.input_price:
+            raise ValueError('缓存命中单价不能高于普通输入单价')
         self.base_url = self.base_url.strip().rstrip('/')
         self.model = self.model.strip()
         if self.enabled:
@@ -48,12 +57,17 @@ def config(role='text'):
         return value
     return dict(name='DeepSeek', base_url='https://api.deepseek.com',
                 model='deepseek-flash' if role == 'vision' else db.setting('model', 'deepseek-chat'),
-                api_key=security.api_key(), json_mode=True, image_detail='original', builtin=True)
+                api_key=security.api_key(), json_mode=True, image_detail='original', builtin=True,
+                thinking=db.setting('vision_thinking', 'enabled') if role == 'vision' else ('enabled' if db.setting('model','deepseek-chat') == 'deepseek-reasoner' else 'disabled'))
 
 
 def identity(role='text'):
     p = config(role)
-    return {k: p[k] for k in ('base_url', 'model', 'json_mode', 'image_detail')}
+    identity = {k: p[k] for k in ('base_url', 'model', 'json_mode', 'image_detail')}
+    # Preserve old cache keys when the now-explicit policy matches the prior default.
+    if (p.get('builtin') and role == 'vision' and p['thinking'] != 'enabled') or (not p.get('builtin') and p.get('thinking','provider_default') != 'provider_default'):
+        identity['thinking'] = p['thinking']
+    return identity
 
 
 def has_key(role='text'):
@@ -87,8 +101,12 @@ async def complete(client, body, role='text'):
     p = config(role)
     data = copy.deepcopy(body)
     data['model'] = p['model']
-    if not p.get('builtin'):
+    if p.get('builtin'):
+        data.setdefault('thinking', {'type': p['thinking']})
+    elif p.get('thinking', 'provider_default') == 'provider_default':
         data.pop('thinking', None)
+    else:
+        data.setdefault('thinking', {'type': p['thinking']})
     if not p.get('json_mode', True):
         data.pop('response_format', None)
     for message in data.get('messages', []):
@@ -97,5 +115,7 @@ async def complete(client, body, role='text'):
             for item in content:
                 if item.get('type') == 'image_url':
                     item['image_url']['detail'] = p['image_detail']
+    from . import usage
+    usage.describe_current(p, data)
     return await client.post(p['base_url'] + '/chat/completions',
                              headers={'Authorization': 'Bearer ' + deepseek.validate_key(p.get('api_key', ''))}, json=data)

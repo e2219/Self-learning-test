@@ -17,6 +17,7 @@ class CourseInput(BaseModel):
 class SettingsInput(BaseModel):
     api_key: str = Field(default="", max_length=500)
     clear_key: bool = False
+    vision_thinking: Literal["enabled", "disabled"] | None = None
     model: Literal["deepseek-chat", "deepseek-reasoner"] = "deepseek-chat"
 
 
@@ -64,6 +65,7 @@ class ExamInput(BaseModel):
     instructions: str = Field(default="", max_length=2000)
     max_attempts: int = Field(default=2, ge=1, le=3)
     token_budget: int = Field(default=0, ge=0, le=10_000_000)
+    planning_token_budget: int = Field(default=0, ge=0, le=10_000_000)
     batch_generation: bool = False
     answer_detail: Literal["concise", "full"] = "concise"
     duration: int = Field(default=60, ge=5, le=240)

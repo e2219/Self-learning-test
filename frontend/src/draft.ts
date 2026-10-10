@@ -52,6 +52,7 @@ export function draftSnapshot(config: ExamConfig, blueprint: ExamPlan['blueprint
     config.duration,
     planSettings(config),
     config.token_budget ?? 0,
+    config.planning_token_budget ?? 0,
     config.max_attempts ?? 2,
     config.batch_generation ?? false,
     blueprint,

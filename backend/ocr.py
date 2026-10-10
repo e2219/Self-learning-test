@@ -193,21 +193,24 @@ async def recognize_page(image: bytes) -> tuple[OCRResult, int]:
     try:
         async with deepseek.create_client(timeout=httpx.Timeout(240, connect=15)) as client:
             report_progress("requesting")
-            response = await providers.complete(client, body, "vision")
+            context = _usage_context.get() or ('ocr', None, 'ocr', 1)
+            owner_type, owner_id, stage, attempt = context
+            response = await usage.request(client, body, "vision", owner_type=owner_type, owner_id=owner_id, stage=stage, attempt=attempt)
             report_progress("response_received", response.status_code)
         errors = {401: "AI 服务密钥无效，请检查设置。", 402: "AI 服务余额不足，请充值后重试。",
                   429: "AI 服务请求限流，请稍后重试。", 400: "AI 服务拒绝了图片识别请求，请检查模型支持情况。"}
         if response.status_code != 200:
             raise OCRError(errors.get(response.status_code, f"AI 服务识别暂不可用（HTTP {response.status_code}），请稍后重试。"))
         try:
-            data = response.json()
+            data = usage.decode(response)
         except (ValueError, UnicodeError) as exc:
             raise OCRError("AI 服务接口返回无法解析（OCR_RESPONSE_JSON），请检查网络或代理后重试。") from exc
-        context = _usage_context.get()
-        if context:
-            owner_type, owner_id, stage, attempt = context
-            usage.record(owner_type, owner_id, stage, data, attempt)
-        result, tokens = decode_response(data)
+        try:
+            result, tokens = decode_response(data)
+        except OCRError:
+            usage.finish(data, 'rejected', 'OCR_VALIDATION')
+            raise
+        usage.finish(data, 'validated')
         db.execute('INSERT OR REPLACE INTO ocr_cache(key,text,notes) VALUES (?,?,?)', (cache_id, result.text, result.notes))
         return result, tokens
     except OCRError:
@@ -242,6 +245,7 @@ async def run_job(job_id):
         return
     active_jobs.add(job_id)
     try:
+        usage.reconcile('ocr',job_id)
         job = detail(job_id)
         if not job:
             return
@@ -320,4 +324,5 @@ async def run_job(job_id):
             con.execute("UPDATE ocr_jobs SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE ? END WHERE id=?",
                 ("partial" if remaining else "ready", job_id))
     finally:
-        active_jobs.discard(job_id)
+        try: usage.reconcile('ocr',job_id)
+        finally: active_jobs.discard(job_id)

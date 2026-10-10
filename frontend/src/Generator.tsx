@@ -58,6 +58,7 @@ export function Generator() {
     [maxAttempts, setMaxAttempts] = useState(2),
     [batchGeneration, setBatchGeneration] = useState(false),
     [tokenBudget, setTokenBudget] = useState(0),
+    [planningBudget, setPlanningBudget] = useState(0),
     [answerDetail, setAnswerDetail] = useState<'concise' | 'full'>('concise'),
     [style, setStyle] = useState('适度变式'),
     [duration, setDuration] = useState(60),
@@ -123,6 +124,7 @@ export function Generator() {
       instructions,
       max_attempts: maxAttempts,
       token_budget: tokenBudget,
+      planning_token_budget: planningBudget,
       batch_generation: batchGeneration,
       answer_detail: answerDetail,
       duration,
@@ -144,6 +146,7 @@ export function Generator() {
     setInstructions(c.instructions || '');
     setMaxAttempts(c.max_attempts ?? 2);
     setTokenBudget(c.token_budget ?? 0);
+    setPlanningBudget(c.planning_token_budget ?? 0);
     setBatchGeneration(c.batch_generation ?? false);
     setAnswerDetail(c.answer_detail || 'concise');
     setStyle(c.style || '适度变式');
@@ -732,6 +735,20 @@ export function Generator() {
                 <p className="field-help">
                   累计包含生成与审题、失败请求已报告的用量；达到阈值后暂停后续调用，当前请求可能超出。规划和
                   OCR 另计。网络失败未报告的用量无法计入。
+                </p>
+                <label>
+                  单次规划 token 预算阈值（0 为不限）
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000000}
+                    step={1000}
+                    value={planningBudget}
+                    onChange={(e) => setPlanningBudget(Number(e.target.value))}
+                  />
+                </label>
+                <p className="field-help">
+                  达到阈值后停止后续规划请求，当前请求可能超出。已完成片段保留缓存，可提高预算后重新规划。
                 </p>
                 <label>
                   解析详细程度

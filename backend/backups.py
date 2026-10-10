@@ -15,7 +15,7 @@ from . import db
 
 TABLES = {'courses', 'documents', 'pages', 'exams', 'questions', 'attempts', 'ocr_jobs',
           'ocr_job_pages', 'exam_plans', 'plan_revisions', 'topic_cache', 'exam_submissions',
-          'ocr_cache', 'usage_events'}
+          'ocr_cache', 'usage_events', 'review_checkpoints'}
 _building = threading.Lock()
 _pending_lock = threading.Lock()
 _pending = {}

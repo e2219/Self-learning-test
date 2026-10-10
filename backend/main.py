@@ -104,6 +104,14 @@ def exam_detail(exam_id):
     return exam
 
 
+@api.get('/usage')
+def usage_ledger(start: str = '', end: str = ''):
+    try:
+        return usage.ledger(start, end)
+    except ValueError as exc:
+        raise HTTPException(422, '日期格式应为 YYYY-MM-DD，开始日期不能晚于结束日期。') from exc
+
+
 @api.get("/session")
 def session():
     return {"authenticated": True}
@@ -121,7 +129,7 @@ def logout(request: Request, response: Response):
 def settings():
     return {"deepseek_has_key": bool(security.api_key()), "has_key": providers.has_key(), "has_vision_key": providers.has_key("vision"),
         "providers": {role: providers.public(role) for role in ("text", "vision")}, "key_from_env": bool(os.environ.get("DEEPSEEK_API_KEY")),
-        "model": db.setting("model", "deepseek-chat"),
+        "model": db.setting("model", "deepseek-chat"), "vision_thinking": db.setting("vision_thinking", "enabled"),
         "ocr_model": providers.config("vision")["model"], "ocr_max_pages": ocr.MAX_PAGES,
         "max_pdf_bytes": limits.MAX_PDF_BYTES, "max_pdf_pages": limits.MAX_PDF_PAGES}
 
@@ -142,6 +150,7 @@ def update_settings(payload: SettingsInput):
     elif payload.api_key.strip():
         db.set_setting("api_key", payload.api_key.strip())
     db.set_setting("model", payload.model)
+    if payload.vision_thinking is not None: db.set_setting("vision_thinking", payload.vision_thinking)
     return settings()
 
 
@@ -622,6 +631,7 @@ async def regenerate(question_id: str, background: BackgroundTasks):
     if json.loads(exam['config']).get('origin') == 'web_import':
         raise HTTPException(422, '来源摘录题不支持重新生成或 AI 详解；可手动编辑修订。')
     validate_ranges(ExamInput.model_validate_json(exam["config"]))
+    db.execute("DELETE FROM review_checkpoints WHERE question_id=?", (question_id,))
     db.execute("UPDATE questions SET candidate='',status='pending',error='' WHERE id=?", (question_id,))
     db.execute("UPDATE exams SET status='queued',error='' WHERE id=?", (question["exam_id"],))
     background.add_task(run_generation, question["exam_id"])
@@ -653,6 +663,7 @@ def edit_question(question_id: str, payload: QuestionEdit):
         sources = [{**s, 'modified': True} for s in json.loads(question['sources'])]
     db.execute("""UPDATE questions SET candidate='',stem=?,options=?,answer=?,explanation=?,rubric=?,knowledge=?,sources=?,blanks=?,review='{}',points=?,status='ready',error='',self_score=NULL,is_wrong=0 WHERE id=?""",
         (payload.stem, db.dump(payload.options), checked.answer, payload.explanation, db.dump(payload.rubric), payload.knowledge, db.dump(sources), db.dump([b.model_dump() for b in checked.blanks]), payload.points, question_id))
+    db.execute("DELETE FROM review_checkpoints WHERE question_id=?", (question_id,))
     refresh_exam(question["exam_id"])
     return db.question(required("questions", question_id))
 

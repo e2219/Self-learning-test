@@ -3,6 +3,10 @@ import { api, json } from './api';
 import { Notice } from './ui';
 
 export type Provider = {
+  thinking?: string;
+  input_price?: number | null;
+  cached_price?: number | null;
+  output_price?: number | null;
   enabled?: boolean;
   name?: string;
   base_url?: string;
@@ -28,6 +32,10 @@ export function ProviderSettings({
     base_url: value.base_url || '',
     model: value.model || '',
     api_key: '',
+    thinking: value.thinking || 'provider_default',
+    input_price: value.input_price?.toString() ?? '',
+    cached_price: value.cached_price?.toString() ?? '',
+    output_price: value.output_price?.toString() ?? '',
     json_mode: value.json_mode ?? true,
     image_detail: value.image_detail || 'high',
   });
@@ -44,7 +52,15 @@ export function ProviderSettings({
         const r = await api<{ message: string }>(`/settings/providers/${role}/test`, json('POST'));
         setMessage(r.message);
       } else {
-        await api(`/settings/providers/${role}`, json('PUT', form));
+        await api(
+          `/settings/providers/${role}`,
+          json('PUT', {
+            ...form,
+            input_price: form.input_price === '' ? null : Number(form.input_price),
+            cached_price: form.cached_price === '' ? null : Number(form.cached_price),
+            output_price: form.output_price === '' ? null : Number(form.output_price),
+          }),
+        );
         setForm({ ...form, api_key: '' });
         await reload();
         setMessage('接口已保存。');
@@ -128,6 +144,40 @@ export function ProviderSettings({
               />
               接口支持 JSON Object 模式（不支持时取消；仍会核验返回格式）
             </label>
+            <details>
+              <summary>思考参数与参考计价（可选）</summary>
+              <label>
+                思考模式
+                <select
+                  value={form.thinking}
+                  onChange={(e) => change({ thinking: e.target.value })}
+                >
+                  <option value="provider_default">服务商默认（不发送 thinking 参数）</option>
+                  <option value="enabled">开启 thinking</option>
+                  <option value="disabled">关闭 thinking</option>
+                </select>
+              </label>
+              <p className="field-help">
+                仅在服务商支持 thinking.type 时选择开启或关闭；选择显式模式后，普通 OCR
+                会请求关闭思考。
+              </p>
+              {(['input_price', 'cached_price', 'output_price'] as const).map((field, i) => (
+                <label key={field}>
+                  {['普通输入', '缓存命中输入', '输出'][i]}单价（美元 / 百万 tokens）
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    step="any"
+                    value={form[field]}
+                    onChange={(e) => change({ [field]: e.target.value })}
+                  />
+                </label>
+              ))}
+              <p className="field-help">
+                三项一起填写或全部留空。仅估算新请求，不回算旧记录；实际费用以服务商账单为准。
+              </p>
+            </details>
             {role === 'vision' && (
               <label>
                 图片 detail 参数

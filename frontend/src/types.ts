@@ -119,6 +119,7 @@ export type ExamConfig = {
   instructions?: string;
   max_attempts?: number;
   token_budget?: number;
+  planning_token_budget?: number;
   batch_generation?: boolean;
   answer_detail?: 'concise' | 'full';
   duration: number;
@@ -147,6 +148,7 @@ export type Exam = {
   questions: Question[];
 };
 export type Settings = {
+  vision_thinking?: 'enabled' | 'disabled';
   deepseek_has_key: boolean;
   has_vision_key: boolean;
   providers: Record<'text' | 'vision', import('./ProviderSettings').Provider>;

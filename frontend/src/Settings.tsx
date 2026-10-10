@@ -1,4 +1,5 @@
 import { ProviderSettings } from './ProviderSettings';
+import { UsageLedger } from './Usage';
 import { Backup } from './Backup';
 import { useState } from 'react';
 import { Check, KeyRound, Save, Server, ShieldCheck, Wifi } from 'lucide-react';
@@ -10,6 +11,7 @@ export function SettingsPage() {
   const settings = useRemote<Settings>('/settings');
   const [key, setKey] = useState(''),
     [model, setModel] = useState(''),
+    [visionThinking, setVisionThinking] = useState(''),
     [busy, setBusy] = useState(false),
     [checking, setChecking] = useState(false),
     [message, setMessage] = useState(''),
@@ -27,6 +29,7 @@ export function SettingsPage() {
         <div className="settings-layout">
           <div>
             <Backup />
+            <UsageLedger />
             {settings.data?.providers &&
               (['text', 'vision'] as const).map((role) => (
                 <ProviderSettings
@@ -94,6 +97,8 @@ export function SettingsPage() {
                       '/settings',
                       json('PUT', {
                         api_key: key,
+                        vision_thinking:
+                          visionThinking || settings.data?.vision_thinking || 'enabled',
                         model: model || settings.data?.model || 'deepseek-chat',
                       }),
                     );
@@ -138,10 +143,24 @@ export function SettingsPage() {
                   </select>
                 </label>
                 <p className="field-help">
-                  不同模型的速度和费用不同。复杂证明建议尝试推理模型，并人工核验解答。
+                  Chat 明确关闭思考，Reasoner 明确开启思考。复杂证明建议尝试推理模型，并核验解答。
                 </p>
                 <p className="field-help">
                   关闭自定义接口时，识图使用 DeepSeek Flash 并复用此密钥；出题模型的选择不影响 OCR。
+                </p>
+                <label>
+                  原图审题思考模式
+                  <select
+                    value={visionThinking || settings.data?.vision_thinking || 'enabled'}
+                    onChange={(e) => setVisionThinking(e.target.value)}
+                  >
+                    <option value="enabled">开启（默认，优先保留审题能力）</option>
+                    <option value="disabled">关闭（减少思考输出，复杂题请对照核验）</option>
+                  </select>
+                </label>
+                <p className="field-help">
+                  适用于内置识图模型的原图审题和看图仿题；普通 OCR
+                  始终关闭思考。关闭后的质量尚未经过大样本验证。
                 </p>
                 <div className="button-group">
                   <button className="button primary" type="submit" disabled={busy}>

@@ -134,6 +134,20 @@ def init_db():
         usage_columns = {r['name'] for r in con.execute('PRAGMA table_info(usage_events)')}
         if 'reasoning_tokens' not in usage_columns:
             con.execute('ALTER TABLE usage_events ADD COLUMN reasoning_tokens INTEGER')
+        for name, spec in (
+            ('created_at','TEXT'), ('question_id','TEXT'), ('requested_model','TEXT'),
+            ('provider_origin','TEXT'), ('thinking','TEXT'), ('request_id','TEXT'),
+            ('http_status','INTEGER'), ('outcome','TEXT'), ('error_code','TEXT'),
+            ('price_version','TEXT'), ('price_snapshot','TEXT'),
+            ('estimated_usd_min','REAL'), ('estimated_usd_max','REAL')):
+            if name not in usage_columns:
+                con.execute(f'ALTER TABLE usage_events ADD COLUMN {name} {spec}')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_events(created_at)')
+        con.execute("""CREATE TABLE IF NOT EXISTS review_checkpoints (
+            question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+            stage TEXT NOT NULL, signature TEXT NOT NULL, response TEXT NOT NULL,
+            PRIMARY KEY(question_id,stage))""")
+        con.execute("UPDATE usage_events SET outcome='interrupted',error_code='REQUEST_INTERRUPTED' WHERE outcome='started'")
         job_columns = {r['name'] for r in con.execute('PRAGMA table_info(ocr_jobs)')}
         for name, spec in (('token_budget', 'INTEGER NOT NULL DEFAULT 0'), ('submission_id', 'TEXT'), ('request_hash', "TEXT NOT NULL DEFAULT ''")):
             if name not in job_columns:
